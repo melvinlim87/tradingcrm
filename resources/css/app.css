@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   Global readability tweaks — bigger + darker text site-wide.
+   Tailwind utility classes still override on a per-element basis.
+   ========================================================================== */
+@layer base {
+    html {
+        font-size: 16px;     /* up from default 14-15 */
+    }
+    body {
+        color: #000;          /* default text → black */
+        font-size: 1rem;
+        line-height: 1.55;
+    }
+    /* Subtle hierarchy boost for common label-ish utilities */
+    .text-xs   { font-size: 0.85rem !important; color: #1f2937; }  /* gray-800 */
+    .text-sm   { font-size: 0.95rem !important; color: #111827; }  /* gray-900 */
+    .text-base { font-size: 1.05rem !important; color: #000; }
+    .text-lg   { font-size: 1.20rem !important; color: #000; }
+    .text-xl   { font-size: 1.35rem !important; color: #000; }
+    .text-2xl  { font-size: 1.55rem !important; color: #000; }
+    .text-3xl  { font-size: 1.85rem !important; color: #000; }
+
+    /* Darken the "muted" colors that the templates lean on */
+    .text-gray-400 { color: #4b5563 !important; }   /* gray-600 */
+    .text-gray-500 { color: #1f2937 !important; }   /* gray-800 */
+    .text-gray-600 { color: #111827 !important; }   /* gray-900 */
+    .text-gray-700 { color: #000 !important; }
+    .text-gray-900 { color: #000 !important; }
+}

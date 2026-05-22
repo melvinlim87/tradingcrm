@@ -1,0 +1,29 @@
+# Append these to .env after running `composer create-project laravel/laravel .`
+# SECURITY: Never commit the real .env. Rotate any token that has been exposed.
+
+# === Timezone ===
+APP_TIMEZONE=Asia/Singapore
+
+# === EA Push (shared by Risk Monitor EA + Chart Exporter EA) ===
+EA_PUSH_TOKEN=REPLACE_WITH_64_CHAR_RANDOM_STRING
+
+# === OpenRouter (AI Analysis) ===
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+OPENROUTER_TEMPERATURE=0.3
+
+# === Telegram (Drawdown Alerts & Reports) ===
+# Bot token supplied by you (rotate when convenient). The chat is a forum group;
+# topic mapping (thread IDs) lives in the telegram_topics table, seeded from
+# database/seeders/TelegramTopicSeeder.php
+TELEGRAM_BOT_TOKEN=8433795819:AAHuX_MWt8eEZCHxsK8jF0uS5tICHedtGe8
+TELEGRAM_DEFAULT_CHAT_ID=-1003995294956
+TELEGRAM_DRAWDOWN_THRESHOLD=2.0
+
+# === Filesystem (chart PNGs served back to OpenRouter need to be public) ===
+# Run `php artisan storage:link` once so /storage/charts/... is browser-reachable.
+FILESYSTEM_DISK=public
+
+# === Queue (database driver — Windows service via NSSM) ===
+QUEUE_CONNECTION=database
+SESSION_DRIVER=database
