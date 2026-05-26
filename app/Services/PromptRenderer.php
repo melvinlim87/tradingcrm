@@ -6,7 +6,7 @@ use RuntimeException;
 
 class PromptRenderer
 {
-    public const TEMPLATE_RELATIVE_PATH = 'app/prompts/currency_analysis.md';
+    public const TEMPLATE_RELATIVE_PATH = 'app\prompts\currency_analysis.md';
 
     public function render(array $vars): string
     {
