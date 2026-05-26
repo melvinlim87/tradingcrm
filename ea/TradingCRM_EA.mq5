@@ -13,7 +13,7 @@
 //|        backend, the EA simply gets nothing back.                 |
 //|                                                                    |
 //|   MT5 → Tools → Options → Expert Advisors → Allow WebRequest     |
-//|         add: https://quant.lazetrader.com                               |
+//|         add: https://quant.lazetrader.com                         |
 //+------------------------------------------------------------------+
 #property copyright "TradingCRM"
 #property version   "3.70"
@@ -42,23 +42,17 @@ input int     InpBrokerNewsInterval = 300;   // Scan MQL5/Files/news/*.htm → P
 input string  InpBrokerNewsFolder   = "news";// Subfolder under MQL5/Files where broker drops .htm
 
 //=== NEWS PANEL (on-chart) ======================================================
-// Defaults are tuned to drop into the empty 6th cell of CDashboard
-// (3 columns × 2 rows, ~250px cards). Tweak via inputs if your dashboard
-// uses different X/Y or card size.
+// Occupies the empty 6th cell of CDashboard (row 2, column 3).
+// Visual style is locked to Dashboard.mqh — same bg/border/header colors,
+// same fonts (Segoe UI Semibold header + Consolas body), same 18 px row pitch.
+// Defaults assume DashboardX=20, DashboardY=30 (X = 20+400, Y = 30+228).
 input group           "=== NEWS PANEL ==="
 input bool    InpShowNewsPanel     = true;
-input int     InpNewsPanelX        = 525;       // X (px) — aligns with dashboard column 3
-input int     InpNewsPanelY        = 290;       // Y (px) — aligns with dashboard row 2
-input int     InpNewsPanelW        = 245;       // Width  — matches dashboard card width
-input int     InpNewsPanelH        = 250;       // Height — matches dashboard card height
-input int     InpNewsMaxLines      = 8;         // Max news lines shown
-input color   InpNewsBgColor       = C'25,25,30';
-input color   InpNewsBorderColor   = clrDimGray;
-input color   InpNewsTitleColor    = clrDeepSkyBlue;
-input color   InpNewsTextColor     = clrLightGray;
-input color   InpNewsHighColor     = clrRed;
-input color   InpNewsMedColor      = clrOrange;
-input color   InpNewsLowColor      = clrDarkGray;
+input int     InpNewsPanelX        = 420;       // = DashboardX + DASH_COL_W*2
+input int     InpNewsPanelY        = 258;       // = DashboardY + 228 (row 2 top)
+input int     InpNewsPanelW        = 200;       // = DASH_COL_W
+input int     InpNewsPanelH        = 232;       // = DASH_HEIGHT - 228
+input int     InpNewsMaxLines      = 9;         // Matches LP/Exec column row count
 input bool    InpIncludeMt5Calendar = true;     // Pull MT5 native calendar too
 
 //=== SIGNAL TRADING (from v2) ===================================================
@@ -164,7 +158,6 @@ const string NEWS_OBJ_PREFIX  = "tcrm_news_";
 string EndpointUrl(string suffix)
 {
    string base = InpBackendBase;
-   // Strip trailing slash
    while(StringLen(base) > 0 && StringGetCharacter(base, StringLen(base)-1) == '/')
       base = StringSubstr(base, 0, StringLen(base)-1);
    if(StringLen(suffix) > 0 && StringGetCharacter(suffix, 0) != '/')
@@ -287,7 +280,7 @@ void OnTimer()
    if(InpChartPollInterval > 0 && current_time - last_chart_poll >= InpChartPollInterval)
    {
       PollChartRequests();
-      PollNewsRequests();      // On-demand "Refresh MT5 News" admin button
+      PollNewsRequests();
       last_chart_poll = current_time;
    }
 
@@ -415,7 +408,7 @@ void ExecuteOrderMT5(string type, double apiEntryPrice, double apiSL, double api
 void ExportRiskData()
 {
    long   accountNum  = AccountInfoInteger(ACCOUNT_LOGIN);
-   string accountName = AccountInfoString(ACCOUNT_NAME);    // Broker-side holder name
+   string accountName = AccountInfoString(ACCOUNT_NAME);
    string brokerName  = AccountInfoString(ACCOUNT_COMPANY);
    string serverName  = AccountInfoString(ACCOUNT_SERVER);
    string currency    = AccountInfoString(ACCOUNT_CURRENCY);
@@ -733,8 +726,6 @@ void ProcessChartRequest(int requestId, string symbol)
       ChartSetInteger(chartId, CHART_SHIFT,            false);
       ChartSetInteger(chartId, CHART_AUTOSCROLL,       true);
       ChartSetInteger(chartId, CHART_VISIBLE_BARS,     InpBarsToShow);
-      // Show OHLC values + current bid/ask/last price overlays so the screenshot
-      // is self-contained — the AI can verify its price calls against what's on screen.
       ChartSetInteger(chartId, CHART_SHOW_OHLC,        true);
       ChartSetInteger(chartId, CHART_SHOW_BID_LINE,    true);
       ChartSetInteger(chartId, CHART_SHOW_ASK_LINE,    true);
@@ -757,10 +748,6 @@ void ProcessChartRequest(int requestId, string symbol)
       }
 
       Sleep(500);
-      // NOTE: we report the ORIGINAL requested symbol (not the broker-suffixed one)
-      // so the backend can match it back to the analysis row. The current bid from
-      // the broker-resolved symbol is sent so the analysis page + AI prompt can
-      // verify price levels.
       double bid = SymbolInfoDouble(resolved, SYMBOL_BID);
       double ask = SymbolInfoDouble(resolved, SYMBOL_ASK);
       int digits = (int)SymbolInfoInteger(resolved, SYMBOL_DIGITS);
@@ -769,15 +756,8 @@ void ProcessChartRequest(int requestId, string symbol)
    }
 }
 
-//+------------------------------------------------------------------+
-//| Resolve a "clean" symbol (e.g. EURUSD) to the actual broker      |
-//| symbol (e.g. EURUSD.m / EURUSD#). Tries bare name first, then a  |
-//| list of common suffixes, then scans Market Watch, then ALL       |
-//| available broker symbols. Returns "" if nothing matches.         |
-//+------------------------------------------------------------------+
 string ResolveBrokerSymbol(string clean)
 {
-   // 1. Bare name + common suffixes (fastest)
    string suffixes[] = {"", ".m", "m", ".raw", ".std", ".pro", ".ecn",
                         ".sml", ".micro", "#", "-LIVE", ".cash", ".c",
                         ".x", "_i", ".i", ".live", ".a", ".b", "-cd"};
@@ -793,7 +773,6 @@ string ResolveBrokerSymbol(string clean)
       }
    }
 
-   // 2. Scan Market Watch (visible symbols) for substring match
    int mwTotal = SymbolsTotal(true);
    for(int i = 0; i < mwTotal; i++)
    {
@@ -805,7 +784,6 @@ string ResolveBrokerSymbol(string clean)
       }
    }
 
-   // 3. Scan ALL broker symbols (not just Market Watch)
    int allTotal = SymbolsTotal(false);
    for(int i = 0; i < allTotal; i++)
    {
@@ -880,8 +858,6 @@ bool UploadChartScreenshot(int requestId, string symbol, string tfName, string f
    string resHeaders;
    string url = EndpointUrl("/chart-exports");
 
-   // 120s timeout — the 3rd-chart upload triggers a synchronous OpenRouter call
-   // server-side, which can take 30-60s. Earlier uploads return in <1s.
    int code = WebRequest("POST", url, headers, 120000, fileData, result, resHeaders);
    if(code < 200 || code >= 300)
    {
@@ -1025,7 +1001,7 @@ void UpdateMaxDrawdown()
 }
 
 // =========================================================================
-// EVENT HANDLERS (from v2)
+// EVENT HANDLERS
 // =========================================================================
 
 void OnTradeTransaction(const MqlTradeTransaction &trans,
@@ -1103,71 +1079,76 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 }
 
 // =========================================================================
-// MODULE 4: NEWS PANEL (on-chart card)
+// MODULE 4: NEWS PANEL (on-chart card) — styled to match Dashboard.mqh
 // =========================================================================
+
+// Style constants — mirrored from Dashboard.mqh so the news cell visually
+// docks into the rest of the dashboard. If you change DASH_* there, change
+// them here too.
+#define NEWS_BG_COLOR      C'18,18,28'
+#define NEWS_BORDER_COLOR  C'55,65,95'
+#define NEWS_HEADER_COLOR  C'200,220,255'
+#define NEWS_TEXT_COLOR    C'160,170,190'
+#define NEWS_VALUE_COLOR   C'220,230,245'
+#define NEWS_GOOD_COLOR    C'80,220,120'
+#define NEWS_WARN_COLOR    C'255,200,60'
+#define NEWS_BAD_COLOR     C'255,80,80'
+#define NEWS_HINT_COLOR    C'120,140,170'
+#define NEWS_ROW_H         18
+#define NEWS_FONT          "Consolas"
+#define NEWS_HEADER_FONT   "Segoe UI Semibold"
+
+void CreateNewsLabel(string suffix, int x, int y, string text,
+                     color clr, int fontSize, string font)
+{
+   string name = NEWS_OBJ_PREFIX + suffix;
+   ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
 
 void NewsPanelCreate()
 {
-   // Background rectangle
+   // Background — same fill/border as Dashboard's bgTop/bgBot
    string bg = NEWS_OBJ_PREFIX + "bg";
    ObjectCreate(0, bg, OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, bg, OBJPROP_XDISTANCE, InpNewsPanelX);
    ObjectSetInteger(0, bg, OBJPROP_YDISTANCE, InpNewsPanelY);
    ObjectSetInteger(0, bg, OBJPROP_XSIZE, InpNewsPanelW);
    ObjectSetInteger(0, bg, OBJPROP_YSIZE, InpNewsPanelH);
-   ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, InpNewsBgColor);
+   ObjectSetInteger(0, bg, OBJPROP_BGCOLOR, NEWS_BG_COLOR);
    ObjectSetInteger(0, bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-   ObjectSetInteger(0, bg, OBJPROP_BORDER_COLOR, InpNewsBorderColor);
+   ObjectSetInteger(0, bg, OBJPROP_BORDER_COLOR, NEWS_BORDER_COLOR);
+   ObjectSetInteger(0, bg, OBJPROP_WIDTH, 2);
    ObjectSetInteger(0, bg, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    ObjectSetInteger(0, bg, OBJPROP_BACK, false);
    ObjectSetInteger(0, bg, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, bg, OBJPROP_HIDDEN, true);
 
-   // Title
-   string title = NEWS_OBJ_PREFIX + "title";
-   ObjectCreate(0, title, OBJ_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, title, OBJPROP_XDISTANCE, InpNewsPanelX + 10);
-   ObjectSetInteger(0, title, OBJPROP_YDISTANCE, InpNewsPanelY + 6);
-   ObjectSetString(0, title, OBJPROP_TEXT, "NEWS");
-   ObjectSetInteger(0, title, OBJPROP_COLOR, InpNewsTitleColor);
-   ObjectSetInteger(0, title, OBJPROP_FONTSIZE, 9);
-   ObjectSetString(0, title, OBJPROP_FONT, "Consolas Bold");
-   ObjectSetInteger(0, title, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, title, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, title, OBJPROP_HIDDEN, true);
+   // Section header — same offset (4 px) + size (10) + font as Dashboard headers
+   CreateNewsLabel("title", InpNewsPanelX + 10, InpNewsPanelY + 4,
+                   "ECONOMIC CALENDAR", NEWS_HEADER_COLOR, 10, NEWS_HEADER_FONT);
 
-   // Subtitle (right-aligned hint)
-   string hint = NEWS_OBJ_PREFIX + "hint";
-   ObjectCreate(0, hint, OBJ_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, hint, OBJPROP_XDISTANCE, InpNewsPanelX + 10);
-   ObjectSetInteger(0, hint, OBJPROP_YDISTANCE, InpNewsPanelY + 22);
-   ObjectSetString(0, hint, OBJPROP_TEXT, "Loading...");
-   ObjectSetInteger(0, hint, OBJPROP_COLOR, clrDimGray);
-   ObjectSetInteger(0, hint, OBJPROP_FONTSIZE, 7);
-   ObjectSetString(0, hint, OBJPROP_FONT, "Consolas");
-   ObjectSetInteger(0, hint, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, hint, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, hint, OBJPROP_HIDDEN, true);
+   // Status / hint line — sits one row below header
+   CreateNewsLabel("hint", InpNewsPanelX + 10, InpNewsPanelY + 22,
+                   "Loading...", NEWS_HINT_COLOR, 8, NEWS_FONT);
 
-   // Pre-create N text lines. Spacing = (panel_h - top_offset) / max_lines, clamped.
-   int topOffset = 38;
-   int lineSpacing = (InpNewsPanelH - topOffset - 8) / MathMax(InpNewsMaxLines, 1);
-   if(lineSpacing < 16) lineSpacing = 16;
-   if(lineSpacing > 26) lineSpacing = 26;
-
+   // News rows — same 18 px pitch and font size 8 as the RECENT ALERTS column
+   int contentY = InpNewsPanelY + 44;
    for(int i = 0; i < InpNewsMaxLines; i++)
    {
-      string name = NEWS_OBJ_PREFIX + "line_" + IntegerToString(i);
-      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
-      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, InpNewsPanelX + 8);
-      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, InpNewsPanelY + topOffset + i * lineSpacing);
-      ObjectSetString(0, name, OBJPROP_TEXT, "");
-      ObjectSetInteger(0, name, OBJPROP_COLOR, InpNewsTextColor);
-      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 7);
-      ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
-      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      CreateNewsLabel("line_" + IntegerToString(i),
+                      InpNewsPanelX + 10,
+                      contentY + i * NEWS_ROW_H,
+                      " ", NEWS_TEXT_COLOR, 8, NEWS_FONT);
    }
 
    ChartRedraw(0);
@@ -1254,7 +1235,6 @@ void FetchMt5CalendarNews()
       NewsItem item;
       item.timestamp = (long)values[i].time;
       item.when      = TimeToString(values[i].time, TIME_DATE | TIME_MINUTES);
-      // Strip "yyyy." prefix from "2026.05.22 14:30" → "05-22 14:30"
       if(StringLen(item.when) > 11)
       {
          string mmdd = StringSubstr(item.when, 5, 2) + "-" + StringSubstr(item.when, 8, 2);
@@ -1348,29 +1328,14 @@ string Mt5EventTypeName(int type)
    }
 }
 
-//+------------------------------------------------------------------+
-//| MT5 marks empty numeric fields with LONG_MIN (sometimes LONG_MAX |
-//| on older builds). Reject those sentinels AND any absurdly large  |
-//| magnitude that would never appear in real economic data.         |
-//+------------------------------------------------------------------+
 bool CalendarHasValue(long v)
 {
    if(v == LONG_MIN || v == LONG_MAX) return false;
-   // After ÷ 1,000,000 the value should fit in [-1e9, 1e9] for any
-   // real-world economic statistic. Sentinel values are ~9.2e18 → unsafe.
    double scaled = (double)v / 1000000.0;
    if(scaled < -1e9 || scaled > 1e9) return false;
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| Push MT5 native calendar events to backend (source = 'mt5').      |
-//| MetaQuotes has no public REST API for the calendar — the EA is    |
-//| the only conduit. Backend dedupes by (title + event_at).          |
-//|                                                                    |
-//| Returns: number of events sent (0 = nothing to send / failed).    |
-//| Out params: imported/updated counts parsed from server response.  |
-//+------------------------------------------------------------------+
 int PushMt5CalendarNews(int &outImported, int &outUpdated)
 {
    outImported = 0;
@@ -1388,11 +1353,10 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
       return 0;
    }
 
-   // Build JSON events array
    string json = "{\"events\":[";
    bool first = true;
    int pushed = 0;
-   int max = MathMin(n, 500);   // cap per push to avoid huge payloads
+   int max = MathMin(n, 500);
 
    for(int i = 0; i < max; i++)
    {
@@ -1405,13 +1369,8 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
       string currency = country.currency;
       if(StringLen(currency) < 3) continue;
 
-      // Format event_at as ISO 8601 UTC
       string eventAt = FormatIso8601(values[i].time);
 
-      // Forecast / Previous / Actual — values are in fixed-point (x 1,000,000).
-      // MT5 uses LONG_MIN (NOT LONG_MAX) as the "no value" sentinel for
-      // forecast/prev/actual when the field is empty (e.g. event hasn't
-      // happened yet). LONG_MAX is also possible on some builds.
       string forecast = CalendarHasValue(values[i].forecast_value)
                         ? DoubleToString((double)values[i].forecast_value / 1000000.0, 4) : "";
       string previous = CalendarHasValue(values[i].prev_value)
@@ -1446,7 +1405,6 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
       return 0;
    }
 
-   // POST to backend
    char postData[]; char result[]; string resHeaders;
    string headers = "Content-Type: application/json\r\n" +
                     "Authorization: Bearer " + InpEaToken + "\r\n";
@@ -1470,20 +1428,12 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
    return 0;
 }
 
-//+------------------------------------------------------------------+
-//| Wrapper kept for the periodic timer — discards counts.            |
-//+------------------------------------------------------------------+
 void PushMt5CalendarNewsPeriodic()
 {
    int imp = 0, upd = 0;
    PushMt5CalendarNews(imp, upd);
 }
 
-//+------------------------------------------------------------------+
-//| On-demand: poll backend for admin-triggered news refresh requests.|
-//| If found, push MT5 calendar to /api/ea/news, then POST            |
-//| /api/ea/news-requests/{id}/complete with counts.                  |
-//+------------------------------------------------------------------+
 void PollNewsRequests()
 {
    if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;
@@ -1570,8 +1520,6 @@ string JsonEscape(string s)
    return s;
 }
 
-// Same as above but PRESERVES \n / \r as escaped \\n \\r (so HTML newlines
-// survive the JSON round-trip).
 string JsonEscapeKeepNewlines(string s)
 {
    StringReplace(s, "\\", "\\\\");
@@ -1583,10 +1531,6 @@ string JsonEscapeKeepNewlines(string s)
    return s;
 }
 
-//+------------------------------------------------------------------+
-//| Tracks files we've already uploaded so we don't re-push them on  |
-//| every scan. Persisted in MQL5/Files for survival across reloads. |
-//+------------------------------------------------------------------+
 string  g_uploaded_news[];
 bool    g_uploaded_loaded = false;
 
@@ -1634,11 +1578,6 @@ bool WasUploadedNews(string filename)
    return false;
 }
 
-//+------------------------------------------------------------------+
-//| Scan MQL5/Files/<InpBrokerNewsFolder>/ for new *.htm files       |
-//| dropped by the broker (Trading Central etc.), parse subject /    |
-//| category / time + full HTML body, POST to /api/ea/news/broker.   |
-//+------------------------------------------------------------------+
 void ScanBrokerNewsFolder()
 {
    if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;
@@ -1647,11 +1586,7 @@ void ScanBrokerNewsFolder()
    string pattern = InpBrokerNewsFolder + "\\*.htm";
    string filename = "";
    long handle = FileFindFirst(pattern, filename);
-   if(handle == INVALID_HANDLE)
-   {
-      // Folder may not exist on this broker — silent.
-      return;
-   }
+   if(handle == INVALID_HANDLE) return;
 
    int pushed = 0;
    do
@@ -1665,8 +1600,8 @@ void ScanBrokerNewsFolder()
       if(StringLen(html) < 50) continue;
 
       string subject  = ExtractHtmlTitle(html);
-      string category = "MT5 Broker News";   // can refine per broker
-      string extId    = filename;             // unique per file
+      string category = "MT5 Broker News";
+      string extId    = filename;
 
       if(PushBrokerNewsItem(extId, subject, category, html))
       {
@@ -1683,8 +1618,6 @@ void ScanBrokerNewsFolder()
 
 string ReadFileFully(string path)
 {
-   // Pass 1 — try UTF-16 (MT5 saves broker news .htm files as UTF-16 LE
-   // with BOM, which FILE_UNICODE handles natively).
    int h = FileOpen(path, FILE_READ | FILE_TXT | FILE_UNICODE);
    if(h != INVALID_HANDLE)
    {
@@ -1698,7 +1631,6 @@ string ReadFileFully(string path)
       if(StringLen(body) >= 20) return body;
    }
 
-   // Pass 2 — UTF-8 / ANSI fallback (some brokers save as plain UTF-8)
    h = FileOpen(path, FILE_READ | FILE_TXT | FILE_ANSI);
    if(h != INVALID_HANDLE)
    {
@@ -1752,16 +1684,15 @@ bool PushBrokerNewsItem(string extId, string subject, string category, string ht
    int code = WebRequest("POST", url, headers, 30000, postData, result, resHeaders);
    if(code >= 200 && code < 300)
    {
-      PrintFormat("[BrokerNews] ✓ '%s' (%d bytes)", subject, StringLen(html));
+      PrintFormat("[BrokerNews] OK '%s' (%d bytes)", subject, StringLen(html));
       return true;
    }
-   PrintFormat("[BrokerNews] ✗ HTTP %d for '%s'", code, subject);
+   PrintFormat("[BrokerNews] FAIL HTTP %d for '%s'", code, subject);
    return false;
 }
 
 long ParseDisplayTime(string mmddHHMM)
 {
-   // "05-22 06:45" → approximate epoch (current year, server time)
    if(StringLen(mmddHHMM) < 11) return (long)TimeCurrent();
    MqlDateTime now;
    TimeToStruct(TimeCurrent(), now);
@@ -1777,7 +1708,6 @@ long ParseDisplayTime(string mmddHHMM)
 void AppendNewsItem(NewsItem &item)
 {
    int n = ArraySize(g_news_items);
-   // dedupe against existing items by (title + when)
    for(int i = 0; i < n; i++)
    {
       if(g_news_items[i].title == item.title && g_news_items[i].when == item.when)
@@ -1789,7 +1719,6 @@ void AppendNewsItem(NewsItem &item)
 
 void SortNewsByTime()
 {
-   // Simple insertion sort by timestamp ascending (small arrays)
    int n = ArraySize(g_news_items);
    for(int i = 1; i < n; i++)
    {
@@ -1808,18 +1737,25 @@ void RenderNewsPanel()
 {
    int total = ArraySize(g_news_items);
 
-   // Pick the InpNewsMaxLines items closest to "now" (most relevant)
+   // Pick the slice of items closest to "now". Anchor on the first item
+   // within the last 6 hours; if everything is in the past, show the tail.
    long nowTs = (long)TimeCurrent();
    int  startIdx = 0;
+   bool anchored = false;
    for(int i = 0; i < total; i++)
    {
-      if(g_news_items[i].timestamp >= nowTs - 6 * 3600) { startIdx = i; break; }
-      startIdx = i;
+      if(g_news_items[i].timestamp >= nowTs - 6 * 3600)
+      {
+         startIdx = i;
+         anchored = true;
+         break;
+      }
    }
+   if(!anchored && total > InpNewsMaxLines)
+      startIdx = total - InpNewsMaxLines;
 
-   string hint = NEWS_OBJ_PREFIX + "hint";
-   ObjectSetString(0, hint, OBJPROP_TEXT,
-                   StringFormat("%d items · refreshed %s",
+   ObjectSetString(0, NEWS_OBJ_PREFIX + "hint", OBJPROP_TEXT,
+                   StringFormat("%d events  updated %s",
                                 total,
                                 TimeToString(TimeCurrent(), TIME_MINUTES)));
 
@@ -1829,26 +1765,30 @@ void RenderNewsPanel()
       int idx = startIdx + i;
       if(idx >= total)
       {
-         ObjectSetString(0, name, OBJPROP_TEXT, "");
+         ObjectSetString(0, name, OBJPROP_TEXT, " ");
+         ObjectSetInteger(0, name, OBJPROP_COLOR, NEWS_TEXT_COLOR);
          continue;
       }
       NewsItem n = g_news_items[idx];
 
-      color col = InpNewsTextColor;
-      if(n.impact == "HIGH")        col = InpNewsHighColor;
-      else if(n.impact == "MEDIUM") col = InpNewsMedColor;
-      else                          col = InpNewsLowColor;
+      // Same prefix vocabulary the RECENT ALERTS column uses (!! / !  / i  ),
+      // mapped onto news impact instead of alert severity.
+      string prefix;
+      color  col;
+      if(n.impact == "HIGH")        { prefix = "!! "; col = NEWS_BAD_COLOR;   }
+      else if(n.impact == "MEDIUM") { prefix = "!  "; col = NEWS_WARN_COLOR;  }
+      else                          { prefix = "i  "; col = NEWS_TEXT_COLOR;  }
 
-      // Truncate title so the row fits in the panel width
-      int titleMax = 18;
+      // Row format: "!! 05-26 14:30 USD CPI m/m"  → fits ~32 chars in a 200 px column.
+      int titleMax = 14;
       string shortTitle = (StringLen(n.title) > titleMax)
                           ? StringSubstr(n.title, 0, titleMax - 1) + ".."
                           : n.title;
 
-      string text = StringFormat("%s %s %s %s",
+      string text = StringFormat("%s%s %s %s",
+                                 prefix,
                                  n.when,
-                                 (n.currency == "" ? "  -" : n.currency),
-                                 (n.impact == "HIGH" ? "H" : (n.impact == "MEDIUM" ? "M" : "L")),
+                                 (n.currency == "" ? "---" : n.currency),
                                  shortTitle);
 
       ObjectSetString(0, name, OBJPROP_TEXT, text);
