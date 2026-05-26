@@ -111,7 +111,7 @@ class AnalysisController extends Controller
 
         return redirect()
             ->route('analysis.index', ['symbol' => $symbol])
-            ->with('success', "Analysis queued for {$symbol}. The ChartExporter EA will capture H4/D1/W1 charts within ~10s, then OpenRouter will run the analysis.")
+            ->with('success', "Analysis queued for {$symbol}. ")
             ->with('analysis_id', $analysis->id);
     }
 
