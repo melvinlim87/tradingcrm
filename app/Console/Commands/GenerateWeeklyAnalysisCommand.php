@@ -18,11 +18,17 @@ class GenerateWeeklyAnalysisCommand extends Command
     protected $description = 'Sequentially generate AI analysis for each major FX pair, waiting for each one to complete before starting the next (no queue worker required).';
 
     /**
-     * Default set of pairs (one per base currency on the analysis page).
+     * Default set of pairs covered by the weekly auto-analysis.
+     * - Row 1: base USD majors (one per base currency selector)
+     * - Row 2: cross pairs + commodity (from Analysis page "Cross Pairs" panel)
      */
     private const DEFAULT_SYMBOLS = [
+        // USD majors
         'AUDUSD', 'USDCAD', 'EURUSD', 'GBPUSD',
         'USDCHF', 'NZDUSD', 'USDSGD', 'USDJPY',
+        // Cross pairs + commodity
+        'AUDCAD', 'EURGBP', 'XAUUSD',
+        'EURCHF', 'CADCHF', 'NZDCHF', 'EURNZD',
     ];
 
     public function handle(): int

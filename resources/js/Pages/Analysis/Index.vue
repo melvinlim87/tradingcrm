@@ -198,6 +198,20 @@ const PAIR_MAP = {
     JPY: 'USDJPY',
 };
 
+// Cross / commodity pairs the trader actively cares about — direct symbol picks
+// (not currency-based, so they bypass PAIR_MAP and don't drive the currency tab).
+const CROSS_PAIRS = [
+    'AUDCAD', 'EURGBP', 'XAUUSD',
+    'EURCHF', 'CADCHF', 'USDSGD',
+    'NZDCHF', 'EURNZD',
+];
+
+const selectCrossPair = (symbol) => {
+    // Try to figure out a sensible "currency" highlight from the pair
+    const cur = symbol.startsWith('XAU') ? 'USD' : symbol.substring(0, 3);
+    router.get(route('analysis.index', { symbol, currency: cur }), {}, { preserveState: false });
+};
+
 const TIMEFRAMES = ['H1', 'H4', 'Daily', 'Weekly'];
 const selectedTimeframe = ref('H4');
 
@@ -357,6 +371,28 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                         >
                             {{ cur }}
                         </button>
+                    </div>
+
+                    <div class="border-t border-gray-200 px-4 py-3">
+                        <p class="mb-2 text-base font-bold uppercase tracking-wider text-black">
+                            Cross Pairs / Commodities
+                        </p>
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                v-for="sym in CROSS_PAIRS"
+                                :key="sym"
+                                type="button"
+                                @click="selectCrossPair(sym)"
+                                :class="[
+                                    'rounded-md border-2 px-3 py-1.5 text-sm font-bold font-mono',
+                                    symbol === sym
+                                        ? 'border-amber-600 bg-amber-600 text-white'
+                                        : 'border-amber-200 bg-amber-50 text-black hover:bg-amber-100'
+                                ]"
+                            >
+                                {{ sym }}
+                            </button>
+                        </div>
                     </div>
 
                     <div v-if="traded_symbols.length" class="border-t border-gray-200 px-4 py-3">

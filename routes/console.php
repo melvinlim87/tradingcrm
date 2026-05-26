@@ -31,3 +31,12 @@ Schedule::command('news:scrape')
     ->timezone('Asia/Singapore')
     ->onOneServer()
     ->withoutOverlapping();
+
+// Nightly: prune + downsample account_snapshots so the table stays tiny.
+// Each account at 10s push = 8,640 rows/day. Without pruning a single account
+// generates ~3M rows/year. We keep 30 days raw + downsample beyond 2 days.
+Schedule::command('snapshots:prune')
+    ->dailyAt('03:15')
+    ->timezone('Asia/Singapore')
+    ->onOneServer()
+    ->withoutOverlapping();
