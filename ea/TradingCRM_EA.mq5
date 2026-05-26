@@ -13,7 +13,7 @@
 //|        backend, the EA simply gets nothing back.                 |
 //|                                                                    |
 //|   MT5 → Tools → Options → Expert Advisors → Allow WebRequest     |
-//|         add: http://127.0.0.1:8000                               |
+//|         add: https://quant.lazetrader.com                               |
 //+------------------------------------------------------------------+
 #property copyright "TradingCRM"
 #property version   "3.70"
@@ -26,7 +26,7 @@
 
 //=== UNIFIED BACKEND ============================================================
 input group           "=== BACKEND ==="
-input string  InpBackendBase  = "http://127.0.0.1:8000/api/ea"; // Base URL, no trailing /
+input string  InpBackendBase  = "https://quant.lazetrader.com/api/ea"; // Base URL, no trailing /
 input string  InpEaToken      = "CHANGE_ME_TO_64_CHAR_RANDOM_STRING";    // Matches .env EA_PUSH_TOKEN
 
 //=== TIMERS =====================================================================
