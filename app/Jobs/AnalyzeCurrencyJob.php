@@ -308,8 +308,8 @@ class AnalyzeCurrencyJob implements ShouldQueue
                 ]],
             ],
             'news_impact' => [
-                'high_impact_events' => ['array of short strings'],
-                'summary' => 'string',
+                'past_events' => ['array of short strings — events that already happened this/last week and moved price'],
+                'upcoming_events' => ['array of short strings — events still to come this/next week to watch'],
             ],
             'trade_ideas' => [[
                 'direction' => 'long | short',

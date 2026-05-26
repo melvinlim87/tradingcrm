@@ -47,6 +47,15 @@ const biasClampedPct = (score) => Math.max(0, Math.min(100, Number(score ?? 50))
 // Extract current price snapshot from news_snapshot.price for display
 const priceSnapshot = computed(() => props.analysis?.news_snapshot?.price ?? null);
 
+// Map textual momentum (strong/moderate/weak) → 0-100 gauge value
+const momentumScore = computed(() => {
+    const m = String(props.analysis?.market_structure?.momentum ?? '').toLowerCase();
+    if (m === 'strong')   return 90;
+    if (m === 'moderate') return 55;
+    if (m === 'weak')     return 20;
+    return null;
+});
+
 const flash = computed(() => usePage().props.flash || {});
 
 // 9 base currencies (from your sketch)
@@ -266,41 +275,12 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                 <span v-else-if="analysis.outlook === 'bearish'">↓</span>
                             </span>
                         </h3>
-                        <p v-if="analysis.confidence != null" class="mt-1 text-xs text-gray-500">
-                            Confidence: {{ Math.round(analysis.confidence * 100) }}% ·
+                        <p class="mt-1 text-xs text-black">
                             Generated {{ new Date(analysis.created_at).toLocaleString() }}
                         </p>
                     </div>
 
                     <div class="space-y-4 p-6">
-
-                        <!-- ===== Current Market Price ===== -->
-                        <div v-if="priceSnapshot" class="rounded-lg border-2 border-gray-300 bg-white p-5">
-                            <p class="text-base font-bold uppercase tracking-wider text-black">Current Market Price · {{ analysis.symbol }}</p>
-                            <div class="mt-2 flex flex-wrap items-end gap-6">
-                                <div>
-                                    <p class="text-sm font-semibold text-black">Bid</p>
-                                    <p class="font-mono text-3xl font-bold text-black">
-                                        {{ Number(priceSnapshot.bid).toFixed(priceSnapshot.digits || 5) }}
-                                    </p>
-                                </div>
-                                <div v-if="priceSnapshot.ask">
-                                    <p class="text-sm font-semibold text-black">Ask</p>
-                                    <p class="font-mono text-3xl font-bold text-black">
-                                        {{ Number(priceSnapshot.ask).toFixed(priceSnapshot.digits || 5) }}
-                                    </p>
-                                </div>
-                                <div v-if="priceSnapshot.mid">
-                                    <p class="text-sm font-semibold text-black">Mid</p>
-                                    <p class="font-mono text-3xl font-bold text-black">
-                                        {{ Number(priceSnapshot.mid).toFixed(priceSnapshot.digits || 5) }}
-                                    </p>
-                                </div>
-                                <div v-if="priceSnapshot.captured_at" class="ml-auto text-sm text-black">
-                                    Captured: {{ new Date(priceSnapshot.captured_at).toLocaleString() }}
-                                </div>
-                            </div>
-                        </div>
 
                         <!-- ===== Bias Meter Gauge (horizontal line) ===== -->
                         <div v-if="analysis.bias_score != null" class="rounded-lg border-2 border-gray-300 bg-white p-5">
@@ -336,80 +316,156 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                 </div>
                             </div>
 
-                            <p v-if="analysis.confidence != null" class="mt-4 text-sm text-black">
-                                Model confidence: <span class="font-mono font-bold">{{ Math.round(analysis.confidence * 100) }}%</span>
-                            </p>
                         </div>
 
-                        <div v-if="analysis.summary">
-                            <h4 class="text-sm font-semibold text-gray-700">Summary</h4>
-                            <p class="mt-1 text-sm text-gray-600">{{ analysis.summary }}</p>
-                        </div>
+                        <!-- ===== Market Structure (with momentum meter gauge) ===== -->
+                        <div v-if="analysis.market_structure" class="rounded-lg border-2 border-gray-300 bg-white p-5">
+                            <p class="text-base font-bold uppercase tracking-wider text-black">Market Structure</p>
 
-                        <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
-                            <div v-if="analysis.market_structure" class="rounded-md border border-gray-200 p-4">
-                                <h4 class="text-sm font-semibold text-gray-700">Market Structure</h4>
-                                <dl class="mt-2 space-y-1 text-sm">
-                                    <div class="flex justify-between"><dt class="text-gray-500">Trend</dt><dd class="font-medium">{{ analysis.market_structure.trend }}</dd></div>
-                                    <div class="flex justify-between"><dt class="text-gray-500">Phase</dt><dd class="font-medium">{{ analysis.market_structure.phase }}</dd></div>
-                                    <div class="flex justify-between"><dt class="text-gray-500">Momentum</dt><dd class="font-medium">{{ analysis.market_structure.momentum }}</dd></div>
-                                </dl>
-                                <ul v-if="analysis.market_structure.key_observations?.length" class="mt-3 list-disc space-y-1 pl-5 text-xs text-gray-600">
-                                    <li v-for="(o, i) in analysis.market_structure.key_observations" :key="i">{{ o }}</li>
-                                </ul>
+                            <dl class="mt-3 grid grid-cols-3 gap-4">
+                                <div>
+                                    <dt class="text-sm font-semibold text-black">Trend</dt>
+                                    <dd class="mt-1 text-lg font-bold capitalize text-black">{{ analysis.market_structure.trend || '—' }}</dd>
+                                </div>
+                                <div>
+                                    <dt class="text-sm font-semibold text-black">Phase</dt>
+                                    <dd class="mt-1 text-lg font-bold capitalize text-black">{{ analysis.market_structure.phase || '—' }}</dd>
+                                </div>
+                                <div>
+                                    <dt class="text-sm font-semibold text-black">Momentum</dt>
+                                    <dd class="mt-1 text-lg font-bold capitalize text-black">{{ analysis.market_structure.momentum || '—' }}</dd>
+                                </div>
+                            </dl>
+
+                            <!-- Momentum meter gauge -->
+                            <div v-if="momentumScore != null" class="mt-5 px-3">
+                                <p class="mb-2 text-sm font-semibold text-black">Momentum Strength</p>
+                                <div class="relative h-4 w-full rounded-full bg-gradient-to-r from-gray-300 via-yellow-400 to-purple-600">
+                                    <div class="absolute top-full mt-1 h-2 w-px bg-black" style="left: 0%"></div>
+                                    <div class="absolute top-full mt-1 h-2 w-px bg-black" style="left: 50%"></div>
+                                    <div class="absolute top-full mt-1 h-2 w-px bg-black" style="left: 100%"></div>
+                                    <div
+                                        class="absolute -top-2 h-8 w-1.5 -translate-x-1/2 rounded bg-black shadow-lg ring-2 ring-white"
+                                        :style="{ left: `${momentumScore}%` }"
+                                    ></div>
+                                </div>
+                                <div class="mt-4 flex justify-between text-sm font-semibold text-black">
+                                    <span>Weak</span>
+                                    <span>Moderate</span>
+                                    <span>Strong</span>
+                                </div>
                             </div>
 
-                            <div v-if="analysis.support_resistance" class="rounded-md border border-gray-200 p-4">
-                                <h4 class="text-sm font-semibold text-gray-700">Support / Resistance</h4>
-                                <div class="mt-2 space-y-2 text-sm">
-                                    <div>
-                                        <p class="text-xs font-medium text-gray-500">Supports</p>
-                                        <ul class="mt-1 space-y-0.5">
-                                            <li v-for="(s, i) in (analysis.support_resistance.supports || [])" :key="i" class="font-mono text-xs text-gray-700">
-                                                {{ s.price }} <span class="text-gray-400">({{ s.strength }})</span>
-                                            </li>
-                                        </ul>
+                            <ul v-if="analysis.market_structure.key_observations?.length" class="mt-5 list-disc space-y-1 pl-5 text-sm text-black">
+                                <li v-for="(o, i) in analysis.market_structure.key_observations" :key="i">{{ o }}</li>
+                            </ul>
+                        </div>
+
+                        <!-- ===== Support / Resistance — with current price + chart ===== -->
+                        <div v-if="analysis.support_resistance" class="rounded-lg border-2 border-gray-300 bg-white p-5">
+                            <p class="text-base font-bold uppercase tracking-wider text-black">Support / Resistance · {{ analysis.symbol }}</p>
+
+                            <!-- Current market price strip -->
+                            <div v-if="priceSnapshot" class="mt-3 flex flex-wrap items-end gap-6 rounded-md bg-gray-50 px-4 py-3">
+                                <div>
+                                    <p class="text-sm font-semibold text-black">Bid</p>
+                                    <p class="font-mono text-2xl font-bold text-black">
+                                        {{ Number(priceSnapshot.bid).toFixed(priceSnapshot.digits || 5) }}
+                                    </p>
+                                </div>
+                                <div v-if="priceSnapshot.ask">
+                                    <p class="text-sm font-semibold text-black">Ask</p>
+                                    <p class="font-mono text-2xl font-bold text-black">
+                                        {{ Number(priceSnapshot.ask).toFixed(priceSnapshot.digits || 5) }}
+                                    </p>
+                                </div>
+                                <div v-if="priceSnapshot.mid">
+                                    <p class="text-sm font-semibold text-black">Mid</p>
+                                    <p class="font-mono text-2xl font-bold text-black">
+                                        {{ Number(priceSnapshot.mid).toFixed(priceSnapshot.digits || 5) }}
+                                    </p>
+                                </div>
+                                <div v-if="priceSnapshot.captured_at" class="ml-auto text-xs text-black">
+                                    Captured: {{ new Date(priceSnapshot.captured_at).toLocaleString() }}
+                                </div>
+                            </div>
+
+                            <!-- Chart -->
+                            <div class="mt-3">
+                                <div class="mb-1 flex items-center justify-between">
+                                    <p class="text-sm font-semibold text-black">{{ symbol }} · {{ selectedTimeframe }}</p>
+                                    <div class="flex gap-1">
+                                        <button
+                                            v-for="tf in TIMEFRAMES"
+                                            :key="tf"
+                                            type="button"
+                                            @click="selectedTimeframe = tf"
+                                            :class="[
+                                                'rounded border px-2 py-0.5 text-xs font-medium',
+                                                selectedTimeframe === tf
+                                                    ? 'border-black bg-black text-white'
+                                                    : 'border-gray-300 bg-white text-black hover:bg-gray-100'
+                                            ]"
+                                        >{{ tf }}</button>
                                     </div>
-                                    <div>
-                                        <p class="text-xs font-medium text-gray-500">Resistances</p>
-                                        <ul class="mt-1 space-y-0.5">
-                                            <li v-for="(r, i) in (analysis.support_resistance.resistances || [])" :key="i" class="font-mono text-xs text-gray-700">
-                                                {{ r.price }} <span class="text-gray-400">({{ r.strength }})</span>
-                                            </li>
-                                        </ul>
-                                    </div>
+                                </div>
+                                <iframe
+                                    :key="symbol + selectedTimeframe"
+                                    :src="`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(tradingViewSymbol)}&interval=${selectedTimeframe === 'Daily' ? 'D' : selectedTimeframe === 'Weekly' ? 'W' : selectedTimeframe}&theme=light&style=1`"
+                                    class="h-[320px] w-full rounded border border-gray-300"
+                                    frameborder="0"
+                                    allowfullscreen
+                                ></iframe>
+                            </div>
+
+                            <!-- S/R levels -->
+                            <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                <div>
+                                    <p class="text-sm font-bold text-black">Supports</p>
+                                    <ul class="mt-1 space-y-1">
+                                        <li v-for="(s, i) in (analysis.support_resistance.supports || [])" :key="i" class="font-mono text-sm text-black">
+                                            {{ s.price }} <span class="text-xs text-black">({{ s.strength }})</span>
+                                            <span v-if="s.note" class="block pl-3 text-xs text-black">{{ s.note }}</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <p class="text-sm font-bold text-black">Resistances</p>
+                                    <ul class="mt-1 space-y-1">
+                                        <li v-for="(r, i) in (analysis.support_resistance.resistances || [])" :key="i" class="font-mono text-sm text-black">
+                                            {{ r.price }} <span class="text-xs text-black">({{ r.strength }})</span>
+                                            <span v-if="r.note" class="block pl-3 text-xs text-black">{{ r.note }}</span>
+                                        </li>
+                                    </ul>
                                 </div>
                             </div>
                         </div>
 
-                        <div v-if="analysis.news_impact">
-                            <h4 class="text-sm font-semibold text-gray-700">News Impact</h4>
-                            <p class="mt-1 text-sm text-gray-600">{{ analysis.news_impact.summary }}</p>
-                            <ul v-if="analysis.news_impact.high_impact_events?.length" class="mt-2 list-disc space-y-0.5 pl-5 text-xs text-gray-600">
-                                <li v-for="(e, i) in analysis.news_impact.high_impact_events" :key="i">{{ e }}</li>
-                            </ul>
-                        </div>
-                    </div>
-                </section>
+                        <!-- ===== News Impact (past vs upcoming) ===== -->
+                        <div v-if="analysis.news_impact" class="rounded-lg border-2 border-gray-300 bg-white p-5">
+                            <p class="text-base font-bold uppercase tracking-wider text-black">News Impact</p>
 
-                <!-- TradingView chart -->
-                <section class="overflow-hidden bg-white shadow-sm sm:rounded-lg">
-                    <div class="border-b border-gray-200 px-6 py-4">
-                        <h3 class="text-lg font-medium text-gray-900">
-                            {{ symbol }} · {{ selectedTimeframe }}
-                        </h3>
-                    </div>
-                    <div class="p-4">
-                        <iframe
-                            :key="symbol + selectedTimeframe"
-                            :src="`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(tradingViewSymbol)}&interval=${selectedTimeframe === 'Daily' ? 'D' : selectedTimeframe === 'Weekly' ? 'W' : selectedTimeframe}&theme=light&style=1`"
-                            class="h-[500px] w-full rounded border border-gray-200"
-                            frameborder="0"
-                            allowfullscreen
-                        ></iframe>
-                        <p class="mt-2 text-xs text-gray-400">
-                            TradingView free widget — for reference only. AI analysis uses charts captured by the MT5 EA.
-                        </p>
+                            <div class="mt-3 grid grid-cols-1 gap-5 md:grid-cols-2">
+                                <div>
+                                    <p class="text-sm font-bold text-black">
+                                        <span class="mr-1">⏮</span> Past Events
+                                    </p>
+                                    <ul v-if="(analysis.news_impact.past_events || []).length" class="mt-2 list-disc space-y-1 pl-5 text-sm text-black">
+                                        <li v-for="(e, i) in analysis.news_impact.past_events" :key="i">{{ e }}</li>
+                                    </ul>
+                                    <p v-else class="mt-2 text-sm text-black">No notable past events.</p>
+                                </div>
+                                <div>
+                                    <p class="text-sm font-bold text-black">
+                                        <span class="mr-1">⏭</span> Upcoming Events
+                                    </p>
+                                    <ul v-if="(analysis.news_impact.upcoming_events || []).length" class="mt-2 list-disc space-y-1 pl-5 text-sm text-black">
+                                        <li v-for="(e, i) in analysis.news_impact.upcoming_events" :key="i">{{ e }}</li>
+                                    </ul>
+                                    <p v-else class="mt-2 text-sm text-black">No notable upcoming events.</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </section>
 

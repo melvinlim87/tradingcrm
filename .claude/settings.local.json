@@ -36,7 +36,8 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} \\(redirect: %{redirect_url}\\)\\\\n\" http://127.0.0.1:8000/)",
       "Bash(php -r \"echo json_encode\\(json_decode\\(stream_get_contents\\(STDIN\\), true\\), JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE\\);\")",
       "Bash(php -l app/Http/Controllers/Api/EaChartController.php)",
-      "Bash(php -l app/Jobs/AnalyzeCurrencyJob.php)"
+      "Bash(php -l app/Jobs/AnalyzeCurrencyJob.php)",
+      "Bash(php -l app/Console/Commands/GenerateWeeklyAnalysisCommand.php)"
     ]
   }
 }
