@@ -464,7 +464,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-6 py-3">
                                 <div class="flex items-baseline gap-3">
                                     <span class="font-mono text-base font-bold text-black">#{{ acc.account_number }}</span>
-                                    <span v-if="acc.account_name" class="text-base font-bold text-black">{{ acc.account_name }}</span>
+                                    <template v-if="acc.account_name">
+                                        <span class="text-base font-bold text-black">{{ acc.account_name }}</span>
+                                    </template>
+                                    <template v-else>
+                                        <Link :href="route('accounts.index')"
+                                              class="text-base font-bold text-amber-600 hover:underline"
+                                              title="No account name set — click to add one">
+                                            (Unnamed — click to set name)
+                                        </Link>
+                                    </template>
                                     <span class="text-sm text-black">·</span>
                                     <span class="text-sm text-black">{{ acc.broker }}</span>
                                     <span v-if="isAdministrator && acc.creator" class="ml-2 rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700">

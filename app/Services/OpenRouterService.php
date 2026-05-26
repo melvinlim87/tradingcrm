@@ -58,7 +58,6 @@ class OpenRouterService
         $data = $response->json();
         $raw = $data['choices'][0]['message']['content'] ?? '';
         $parsed = $this->extractJson($raw);
-        \Log::error('Repsonse', $data);
 
         if ($parsed === null) {
             throw new RuntimeException(
