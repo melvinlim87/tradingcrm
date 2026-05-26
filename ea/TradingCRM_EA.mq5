@@ -16,10 +16,10 @@
 //|         add: http://127.0.0.1:8000                               |
 //+------------------------------------------------------------------+
 #property copyright "TradingCRM"
-#property version   "3.40"
+#property version   "3.51"
 #property strict
 
-#define EA_VERSION "3.40"
+#define EA_VERSION "3.51"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -284,6 +284,7 @@ void OnTimer()
    if(InpChartPollInterval > 0 && current_time - last_chart_poll >= InpChartPollInterval)
    {
       PollChartRequests();
+      PollNewsRequests();      // On-demand "Refresh MT5 News" admin button
       last_chart_poll = current_time;
    }
 
@@ -298,7 +299,7 @@ void OnTimer()
    if(InpNewsPushInterval > 0 &&
       current_time - last_news_push >= InpNewsPushInterval)
    {
-      PushMt5CalendarNews();
+      PushMt5CalendarNewsPeriodic();
       last_news_push = current_time;
    }
 
@@ -1269,13 +1270,33 @@ string Mt5ImportanceToImpact(int importance)
 }
 
 //+------------------------------------------------------------------+
+//| MT5 marks empty numeric fields with LONG_MIN (sometimes LONG_MAX |
+//| on older builds). Reject those sentinels AND any absurdly large  |
+//| magnitude that would never appear in real economic data.         |
+//+------------------------------------------------------------------+
+bool CalendarHasValue(long v)
+{
+   if(v == LONG_MIN || v == LONG_MAX) return false;
+   // After ÷ 1,000,000 the value should fit in [-1e9, 1e9] for any
+   // real-world economic statistic. Sentinel values are ~9.2e18 → unsafe.
+   double scaled = (double)v / 1000000.0;
+   if(scaled < -1e9 || scaled > 1e9) return false;
+   return true;
+}
+
+//+------------------------------------------------------------------+
 //| Push MT5 native calendar events to backend (source = 'mt5').      |
 //| MetaQuotes has no public REST API for the calendar — the EA is    |
 //| the only conduit. Backend dedupes by (title + event_at).          |
+//|                                                                    |
+//| Returns: number of events sent (0 = nothing to send / failed).    |
+//| Out params: imported/updated counts parsed from server response.  |
 //+------------------------------------------------------------------+
-void PushMt5CalendarNews()
+int PushMt5CalendarNews(int &outImported, int &outUpdated)
 {
-   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;
+   outImported = 0;
+   outUpdated  = 0;
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return 0;
 
    datetime from = TimeCurrent() - (datetime)(InpNewsPushBackH * 3600);
    datetime to   = TimeCurrent() + (datetime)(InpNewsPushWindowH * 3600);
@@ -1285,7 +1306,7 @@ void PushMt5CalendarNews()
    if(n <= 0)
    {
       PrintFormat("[NewsPush] CalendarValueHistory returned %d", n);
-      return;
+      return 0;
    }
 
    // Build JSON events array
@@ -1308,10 +1329,16 @@ void PushMt5CalendarNews()
       // Format event_at as ISO 8601 UTC
       string eventAt = FormatIso8601(values[i].time);
 
-      // Forecast / Previous / Actual — values are in fixed-point per the event spec
-      string forecast = (values[i].forecast_value != LONG_MAX) ? DoubleToString((double)values[i].forecast_value / 1000000.0, 4) : "";
-      string previous = (values[i].prev_value     != LONG_MAX) ? DoubleToString((double)values[i].prev_value     / 1000000.0, 4) : "";
-      string actual   = (values[i].actual_value   != LONG_MAX) ? DoubleToString((double)values[i].actual_value   / 1000000.0, 4) : "";
+      // Forecast / Previous / Actual — values are in fixed-point (x 1,000,000).
+      // MT5 uses LONG_MIN (NOT LONG_MAX) as the "no value" sentinel for
+      // forecast/prev/actual when the field is empty (e.g. event hasn't
+      // happened yet). LONG_MAX is also possible on some builds.
+      string forecast = CalendarHasValue(values[i].forecast_value)
+                        ? DoubleToString((double)values[i].forecast_value / 1000000.0, 4) : "";
+      string previous = CalendarHasValue(values[i].prev_value)
+                        ? DoubleToString((double)values[i].prev_value     / 1000000.0, 4) : "";
+      string actual   = CalendarHasValue(values[i].actual_value)
+                        ? DoubleToString((double)values[i].actual_value   / 1000000.0, 4) : "";
 
       if(!first) json += ",";
       json += "{";
@@ -1332,7 +1359,7 @@ void PushMt5CalendarNews()
    if(pushed == 0)
    {
       Print("[NewsPush] No usable MT5 calendar events in window.");
-      return;
+      return 0;
    }
 
    // POST to backend
@@ -1350,11 +1377,103 @@ void PushMt5CalendarNews()
       string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
       PrintFormat("[NewsPush] Pushed %d MT5 events → HTTP %d  %s",
                   pushed, code, StringSubstr(body, 0, 120));
+      outImported = (int)StringToInteger(ExtractJSONString(body, "imported"));
+      outUpdated  = (int)StringToInteger(ExtractJSONString(body, "updated"));
+      return pushed;
    }
-   else
+
+   PrintFormat("[NewsPush] HTTP %d (pushed %d events)", code, pushed);
+   return 0;
+}
+
+//+------------------------------------------------------------------+
+//| Wrapper kept for the periodic timer — discards counts.            |
+//+------------------------------------------------------------------+
+void PushMt5CalendarNewsPeriodic()
+{
+   int imp = 0, upd = 0;
+   PushMt5CalendarNews(imp, upd);
+}
+
+//+------------------------------------------------------------------+
+//| On-demand: poll backend for admin-triggered news refresh requests.|
+//| If found, push MT5 calendar to /api/ea/news, then POST            |
+//| /api/ea/news-requests/{id}/complete with counts.                  |
+//+------------------------------------------------------------------+
+void PollNewsRequests()
+{
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;
+
+   char   post[];
+   char   result[];
+   string resHeaders;
+   string headers = "Authorization: Bearer " + InpEaToken + "\r\n" +
+                    "Accept: application/json\r\n";
+   string url = EndpointUrl("/news-requests/pending");
+
+   int code = WebRequest("GET", url, headers, 10000, post, result, resHeaders);
+   if(code != 200) return;
+
+   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   int dataStart = StringFind(response, "\"data\"");
+   if(dataStart < 0) return;
+   int arrStart = StringFind(response, "[", dataStart);
+   int arrEnd   = StringFind(response, "]", arrStart);
+   if(arrStart < 0 || arrEnd < 0) return;
+
+   string arr = StringSubstr(response, arrStart + 1, arrEnd - arrStart - 1);
+   if(StringLen(arr) < 5) return;
+
+   string items[];
+   int n = StringSplit(arr, '{', items);
+
+   for(int i = 1; i < n; i++)
    {
-      PrintFormat("[NewsPush] HTTP %d (pushed %d events)", code, pushed);
+      string obj = items[i];
+      int reqId = (int)StringToInteger(ExtractJSONString(obj, "id"));
+      if(reqId <= 0) continue;
+
+      PrintFormat("[NewsReq] Request #%d → fetching MT5 calendar...", reqId);
+
+      int imported = 0, updated = 0;
+      int pushed = PushMt5CalendarNews(imported, updated);
+
+      if(pushed > 0)
+      {
+         CompleteNewsRequest(reqId, imported, updated);
+         PrintFormat("[NewsReq] #%d done: pushed=%d imported=%d updated=%d",
+                     reqId, pushed, imported, updated);
+      }
+      else
+      {
+         FailNewsRequest(reqId, "no_events_or_post_failed");
+         PrintFormat("[NewsReq] #%d failed", reqId);
+      }
    }
+}
+
+void CompleteNewsRequest(int reqId, int imported, int updated)
+{
+   string headers = "Content-Type: application/json\r\n" +
+                    "Authorization: Bearer " + InpEaToken + "\r\n";
+   string payload = StringFormat("{\"imported\":%d,\"updated\":%d}", imported, updated);
+   char data[]; char result[]; string resHeaders;
+   StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   ArrayResize(data, ArraySize(data) - 1);
+   string url = EndpointUrl("/news-requests/" + IntegerToString(reqId) + "/complete");
+   WebRequest("POST", url, headers, 5000, data, result, resHeaders);
+}
+
+void FailNewsRequest(int reqId, string reason)
+{
+   string headers = "Content-Type: application/json\r\n" +
+                    "Authorization: Bearer " + InpEaToken + "\r\n";
+   string payload = StringFormat("{\"reason\":\"%s\"}", reason);
+   char data[]; char result[]; string resHeaders;
+   StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
+   ArrayResize(data, ArraySize(data) - 1);
+   string url = EndpointUrl("/news-requests/" + IntegerToString(reqId) + "/fail");
+   WebRequest("POST", url, headers, 5000, data, result, resHeaders);
 }
 
 string JsonEscape(string s)

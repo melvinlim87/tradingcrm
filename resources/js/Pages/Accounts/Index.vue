@@ -135,13 +135,6 @@ const statusClass = (status) => ({
                                 </p>
                             </div>
 
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Account Name</label>
-                                <p class="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
-                                    Auto-filled from MT5 once the EA pushes data
-                                    (uses <code class="font-mono">ACCOUNT_NAME</code> — the broker-side holder name).
-                                </p>
-                            </div>
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700">Broker *</label>

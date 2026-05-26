@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ForexNews;
+use App\Models\NewsFetchRequest;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -63,6 +64,61 @@ class EaNewsController extends Controller
      *    ]
      *  }
      */
+    /**
+     * EA polls this to find pending news-fetch requests (admin-triggered).
+     *   GET /api/ea/news-requests/pending
+     *   → { data: [ {id, requested_at}, ... ] }
+     * Same wire-shape as chart-requests/pending so the EA can reuse the parser.
+     */
+    public function pending(): JsonResponse
+    {
+        $rows = NewsFetchRequest::whereIn('status', ['pending', 'in_progress'])
+            ->where('created_at', '>=', now()->subMinutes(15))
+            ->orderBy('id')
+            ->limit(5)
+            ->get(['id', 'created_at']);
+
+        // Mark as in_progress so a second poll doesn't double-process
+        NewsFetchRequest::whereIn('id', $rows->pluck('id'))
+            ->where('status', 'pending')
+            ->update(['status' => 'in_progress']);
+
+        return response()->json([
+            'data' => $rows->map(fn ($r) => [
+                'id'           => $r->id,
+                'requested_at' => optional($r->created_at)->toIso8601String(),
+            ]),
+        ]);
+    }
+
+    /**
+     * EA reports that a news-fetch request was completed.
+     *   POST /api/ea/news-requests/{id}/complete  { "imported": N, "updated": M }
+     *   POST /api/ea/news-requests/{id}/fail      { "reason": "..." }
+     */
+    public function complete(Request $request, int $id): JsonResponse
+    {
+        $req = NewsFetchRequest::findOrFail($id);
+        $req->update([
+            'status'          => 'completed',
+            'events_imported' => (int) $request->input('imported', 0),
+            'events_updated'  => (int) $request->input('updated', 0),
+            'completed_at'    => now(),
+        ]);
+        return response()->json(['ok' => true]);
+    }
+
+    public function fail(Request $request, int $id): JsonResponse
+    {
+        $req = NewsFetchRequest::findOrFail($id);
+        $req->update([
+            'status'        => 'failed',
+            'error_message' => (string) $request->input('reason', 'unknown'),
+            'completed_at'  => now(),
+        ]);
+        return response()->json(['ok' => true]);
+    }
+
     public function push(Request $request): JsonResponse
     {
         $events = (array) $request->input('events', []);
@@ -137,6 +193,15 @@ class EaNewsController extends Controller
     private function nullIfEmpty(?string $v): ?string
     {
         $v = trim((string) $v);
-        return $v === '' ? null : $v;
+        if ($v === '') return null;
+
+        // Defensive: drop MT5 sentinel values that leaked through (LONG_MIN /
+        // LONG_MAX divided by 1e6 ≈ ±9.22e12). No real economic figure has
+        // that magnitude. Covers old EA builds that didn't filter properly.
+        if (is_numeric($v) && abs((float) $v) > 1e9) {
+            return null;
+        }
+
+        return $v;
     }
 }

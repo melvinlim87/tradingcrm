@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onBeforeUnmount, reactive, ref, computed } from 'vue';
+import { onMounted, onBeforeUnmount, reactive, ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
@@ -12,13 +12,60 @@ const props = defineProps({
             balance: 0, equity: 0, margin: 0, free_margin: 0,
             floating_pnl: 0, floating_pct: 0, closed_profit: 0,
             max_drawdown: 0, max_abs_drawdown_pct: 0, max_eq_drawdown_pct: 0,
-            equity_series: [],
+            profit_series: [],
         }),
     },
     viewer_role: { type: String, default: 'user' },
 });
 
+// ───────────────── chart info popover state ─────────────────
+const openInfo = ref(null);   // 'overall' | <account_id> | null
+const toggleInfo = (key) => { openInfo.value = openInfo.value === key ? null : key; };
+const closeInfo = () => { openInfo.value = null; };
+
 const isAdministrator = computed(() => props.viewer_role === 'administrator');
+
+// ───────────────── Individual account selector ─────────────────
+const STORAGE_KEY = 'tradingcrm.selected_account_id';
+const selectedAccountId = ref(null);
+const accountSearch = ref('');
+
+// Initial pick: localStorage → first account → null
+const initSelection = (accounts) => {
+    if (!accounts?.length) { selectedAccountId.value = null; return; }
+    const stored = Number(localStorage.getItem(STORAGE_KEY) || 0);
+    if (stored && accounts.find((a) => a.id === stored)) {
+        selectedAccountId.value = stored;
+    } else {
+        selectedAccountId.value = accounts[0].id;
+    }
+};
+
+watch(() => props.accounts, (accs) => {
+    if (!selectedAccountId.value || !accs?.find((a) => a.id === selectedAccountId.value)) {
+        initSelection(accs);
+    }
+}, { immediate: true });
+
+watch(selectedAccountId, (id) => {
+    if (id) localStorage.setItem(STORAGE_KEY, String(id));
+});
+
+const filteredAccountOptions = computed(() => {
+    const q = accountSearch.value.toLowerCase().trim();
+    if (!q) return props.accounts;
+    return props.accounts.filter((a) =>
+        String(a.account_number).includes(q) ||
+        (a.account_name || '').toLowerCase().includes(q) ||
+        (a.broker || '').toLowerCase().includes(q),
+    );
+});
+
+const selectedAccount = computed(() =>
+    props.accounts.find((a) => a.id === selectedAccountId.value) || null,
+);
+
+const selectAccount = (id) => { selectedAccountId.value = id; };
 
 // ───────────────── helpers ─────────────────
 const fmt = (v, digits = 2) =>
@@ -45,22 +92,48 @@ const accountFloatingPct = (acc) => {
 };
 
 // ───────────────── sparkline (SVG line chart) ─────────────────
-const sparkPath = (series, width = 260, height = 50) => {
+// Returns line path, area-fill path, min/max markers and human-readable stats.
+const sparkPath = (series, width = 320, height = 60) => {
     const data = (series || []).map((p) => Number(p.v));
-    if (data.length < 2) return { d: '', last: 0, color: '#000' };
+    if (data.length < 2) {
+        return { d: '', area: '', last: 0, first: 0, min: 0, max: 0, change: 0,
+                 changePct: 0, color: '#9ca3af', points: [], minPt: null, maxPt: null };
+    }
     const min = Math.min(...data);
     const max = Math.max(...data);
     const range = max - min || 1;
+    const padY = 6;                              // leave space at top/bottom
+    const usable = height - padY * 2;
     const step = width / (data.length - 1);
-    const points = data.map((v, i) => {
-        const x = (i * step).toFixed(1);
-        const y = (height - ((v - min) / range) * height).toFixed(1);
-        return `${x},${y}`;
-    });
+    const points = data.map((v, i) => ({
+        x: +(i * step).toFixed(2),
+        y: +(padY + (height - padY * 2) - ((v - min) / range) * usable).toFixed(2),
+        v,
+    }));
+    const linePath = `M ${points.map(p => `${p.x},${p.y}`).join(' L ')}`;
+    const areaPath = `M ${points[0].x},${height} L `
+        + points.map(p => `${p.x},${p.y}`).join(' L ')
+        + ` L ${points[points.length-1].x},${height} Z`;
     const last = data[data.length - 1];
     const first = data[0];
-    const color = last >= first ? '#16a34a' : '#dc2626';
-    return { d: `M ${points.join(' L ')}`, last, color };
+    const change = last - first;
+    const changePct = first ? (change / first) * 100 : 0;
+    const color = change >= 0 ? '#16a34a' : '#dc2626';
+    const minIdx = data.indexOf(min);
+    const maxIdx = data.indexOf(max);
+    return {
+        d: linePath, area: areaPath,
+        last, first, min, max, change, changePct, color,
+        points,
+        minPt: points[minIdx],
+        maxPt: points[maxIdx],
+    };
+};
+
+// Pretty-print a delta with sign + % suffix
+const fmtDelta = (n, pct) => {
+    const sign = n > 0 ? '+' : n < 0 ? '' : '';
+    return `${sign}${fmt(n)} (${sign}${fmt(pct, 2)}%)`;
 };
 
 // ───────────────── per-account tabs ─────────────────
@@ -155,22 +228,92 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         </div>
                     </div>
 
-                    <!-- Sparkline -->
-                    <div v-if="overall.equity_series?.length > 1" class="border-b border-gray-200 bg-gray-50 px-6 py-3">
-                        <div class="flex items-center gap-4">
-                            <p class="text-sm font-bold text-black whitespace-nowrap">Equity ({{ overall.equity_series.length }} snapshots)</p>
-                            <svg :viewBox="`0 0 260 50`" class="h-12 flex-1" preserveAspectRatio="none">
+                    <!-- Profit chart -->
+                    <div v-if="overall.profit_series?.length > 1" class="border-b border-gray-200 bg-gray-50 px-6 py-3">
+                        <div class="flex flex-wrap items-center justify-between gap-4">
+                            <!-- Left: label + clickable info -->
+                            <div class="relative flex items-center gap-2">
+                                <p class="text-sm font-bold text-black">Cumulative Profit</p>
+                                <button
+                                    type="button"
+                                    @click="toggleInfo('overall')"
+                                    class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-400 text-xs text-gray-600 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-700">
+                                    ⓘ
+                                </button>
+
+                                <!-- Popover -->
+                                <div v-if="openInfo === 'overall'"
+                                     class="absolute left-0 top-7 z-30 w-80 rounded-lg border-2 border-gray-300 bg-white p-4 text-xs shadow-2xl">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <p class="text-sm font-bold text-black">How this chart is built</p>
+                                        <button @click="closeInfo" class="text-base text-gray-500 hover:text-black">×</button>
+                                    </div>
+                                    <ul class="mt-2 space-y-1.5 text-black">
+                                        <li><strong>Source table:</strong> <code class="rounded bg-gray-100 px-1 font-mono">orders_history</code></li>
+                                        <li><strong>Scope:</strong> closed trades across <strong>all {{ overall.account_count }} visible account{{ overall.account_count === 1 ? '' : 's' }}</strong> (your role decides what's visible)</li>
+                                        <li><strong>Metric:</strong> <code>pnl</code> column = profit + swap + commission</li>
+                                        <li><strong>Bucket:</strong> grouped by close-day (Asia/Singapore), then cumulated</li>
+                                        <li><strong>Window:</strong> last <strong>60 trading days</strong> ({{ overall.profit_series.length }} day{{ overall.profit_series.length === 1 ? '' : 's' }} with closes)</li>
+                                        <li><strong>Refresh:</strong> only when a new trade closes — not every 10s like equity</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Center: compact chart -->
+                            <svg viewBox="0 0 320 60" class="h-14 w-[320px] flex-shrink-0">
+                                <defs>
+                                    <linearGradient id="spark-grad-overall" x1="0" x2="0" y1="0" y2="1">
+                                        <stop offset="0%"   :stop-color="sparkPath(overall.profit_series).color" stop-opacity="0.35"/>
+                                        <stop offset="100%" :stop-color="sparkPath(overall.profit_series).color" stop-opacity="0"/>
+                                    </linearGradient>
+                                </defs>
+                                <!-- Zero baseline -->
+                                <line x1="0" x2="320"
+                                      :y1="sparkPath(overall.profit_series).max <= 0 ? 6 : (sparkPath(overall.profit_series).min >= 0 ? 54 : 30)"
+                                      :y2="sparkPath(overall.profit_series).max <= 0 ? 6 : (sparkPath(overall.profit_series).min >= 0 ? 54 : 30)"
+                                      stroke="#d1d5db" stroke-width="0.5" stroke-dasharray="2 2"/>
+                                <path :d="sparkPath(overall.profit_series).area" fill="url(#spark-grad-overall)" stroke="none"/>
                                 <path
-                                    :d="sparkPath(overall.equity_series).d"
+                                    :d="sparkPath(overall.profit_series).d"
                                     fill="none"
-                                    :stroke="sparkPath(overall.equity_series).color"
-                                    stroke-width="2"
+                                    :stroke="sparkPath(overall.profit_series).color"
+                                    stroke-width="1.6"
+                                    stroke-linejoin="round"
+                                    stroke-linecap="round"
                                 />
+                                <circle v-if="sparkPath(overall.profit_series).maxPt"
+                                    :cx="sparkPath(overall.profit_series).maxPt.x"
+                                    :cy="sparkPath(overall.profit_series).maxPt.y"
+                                    r="2.5" fill="#16a34a"/>
+                                <circle v-if="sparkPath(overall.profit_series).minPt"
+                                    :cx="sparkPath(overall.profit_series).minPt.x"
+                                    :cy="sparkPath(overall.profit_series).minPt.y"
+                                    r="2.5" fill="#dc2626"/>
+                                <circle
+                                    :cx="sparkPath(overall.profit_series).points.at(-1).x"
+                                    :cy="sparkPath(overall.profit_series).points.at(-1).y"
+                                    r="3"
+                                    :fill="sparkPath(overall.profit_series).color"
+                                    stroke="white" stroke-width="1.5"/>
                             </svg>
-                            <p class="font-mono text-base font-bold text-black whitespace-nowrap">
-                                {{ fmt(sparkPath(overall.equity_series).last) }}
-                            </p>
+
+                            <!-- Right: numeric summary -->
+                            <div class="flex flex-col items-end">
+                                <p class="font-mono text-lg font-bold"
+                                   :class="pctClass(sparkPath(overall.profit_series).last)">
+                                    {{ fmt(sparkPath(overall.profit_series).last) }}
+                                </p>
+                                <p class="text-[11px] text-gray-600">cumulative PnL</p>
+                            </div>
                         </div>
+
+                        <p class="mt-1 text-[11px] text-gray-500">
+                            <span class="font-mono">{{ overall.profit_series[0]?.label }}</span>
+                            <span class="mx-1">→</span>
+                            <span class="font-mono">{{ overall.profit_series.at(-1)?.label }}</span>
+                            · {{ overall.profit_series.length }} day{{ overall.profit_series.length === 1 ? '' : 's' }} with closed trades
+                            · click <strong>ⓘ</strong> to see how this chart is computed
+                        </p>
                     </div>
 
                     <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-5">
@@ -237,7 +380,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                     </div>
                 </section>
 
-                <!-- ===== INDIVIDUAL ACCOUNTS ===== -->
+                <!-- ===== INDIVIDUAL ACCOUNT ===== -->
                 <section>
                     <div class="mb-3 flex items-center justify-between">
                         <h3 class="text-lg font-bold text-black">Individual Account Performance</h3>
@@ -254,8 +397,69 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         </Link>
                     </div>
 
-                    <div v-else class="space-y-4">
-                        <div v-for="acc in accounts" :key="acc.id" class="overflow-hidden bg-white shadow-sm sm:rounded-lg">
+                    <template v-else>
+                        <!-- Account picker (search + select) -->
+                        <div class="mb-4 rounded-lg border-2 border-gray-300 bg-white p-4">
+                            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                                <div>
+                                    <label class="block text-sm font-bold text-black">Filter accounts</label>
+                                    <input
+                                        v-model="accountSearch"
+                                        type="text"
+                                        placeholder="Search by #number, name, broker..."
+                                        class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    />
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-bold text-black">
+                                        Viewing account
+                                        <span class="ml-1 text-xs font-normal text-black">
+                                            ({{ filteredAccountOptions.length }} of {{ accounts.length }} match)
+                                        </span>
+                                    </label>
+                                    <select
+                                        v-model="selectedAccountId"
+                                        class="mt-1 block w-full rounded-md border-gray-300 text-sm font-mono shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    >
+                                        <option v-if="!filteredAccountOptions.length" :value="null">— no match —</option>
+                                        <option
+                                            v-for="acc in filteredAccountOptions"
+                                            :key="acc.id"
+                                            :value="acc.id"
+                                        >
+                                            #{{ acc.account_number }}
+                                            <template v-if="acc.account_name"> — {{ acc.account_name }}</template>
+                                            · {{ acc.broker }}
+                                        </option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Quick-pick chips for fast switching when there are <= 8 accounts -->
+                            <div v-if="accounts.length > 1 && accounts.length <= 8" class="mt-3 flex flex-wrap gap-2">
+                                <button
+                                    v-for="acc in accounts"
+                                    :key="acc.id"
+                                    type="button"
+                                    @click="selectAccount(acc.id)"
+                                    :class="[
+                                        'rounded-md border-2 px-3 py-1.5 text-xs font-bold font-mono',
+                                        selectedAccountId === acc.id
+                                            ? 'border-indigo-600 bg-indigo-600 text-white'
+                                            : 'border-gray-300 bg-white text-black hover:bg-gray-100'
+                                    ]"
+                                >
+                                    #{{ acc.account_number }}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-if="!selectedAccount" class="rounded-lg border-2 border-dashed border-gray-300 bg-white p-8 text-center text-sm text-black">
+                            No account matched your filter. Clear the search above or pick one from the dropdown.
+                        </div>
+
+                        <div v-else class="space-y-4">
+                            <div v-for="acc in [selectedAccount]" :key="acc.id" class="overflow-hidden bg-white shadow-sm sm:rounded-lg">
                             <!-- Account header -->
                             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-6 py-3">
                                 <div class="flex items-baseline gap-3">
@@ -277,16 +481,69 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 </div>
                             </div>
 
-                            <!-- Sparkline per account -->
-                            <div v-if="acc.equity_series?.length > 1" class="border-b border-gray-200 bg-gray-50 px-6 py-2">
-                                <div class="flex items-center gap-4">
-                                    <p class="text-sm font-bold text-black whitespace-nowrap">Equity</p>
-                                    <svg viewBox="0 0 260 40" class="h-10 flex-1" preserveAspectRatio="none">
-                                        <path :d="sparkPath(acc.equity_series, 260, 40).d"
+                            <!-- Profit chart per account -->
+                            <div v-if="acc.profit_series?.length > 1" class="relative border-b border-gray-200 bg-gray-50 px-6 py-2">
+                                <div class="flex flex-wrap items-center justify-between gap-3">
+                                    <div class="relative flex items-center gap-2">
+                                        <p class="text-sm font-bold text-black">Cumulative Profit</p>
+                                        <button
+                                            type="button"
+                                            @click="toggleInfo(acc.id)"
+                                            class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-400 text-xs text-gray-600 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-700">
+                                            ⓘ
+                                        </button>
+
+                                        <!-- Popover -->
+                                        <div v-if="openInfo === acc.id"
+                                             class="absolute left-0 top-7 z-30 w-80 rounded-lg border-2 border-gray-300 bg-white p-4 text-xs shadow-2xl">
+                                            <div class="flex items-start justify-between gap-2">
+                                                <p class="text-sm font-bold text-black">How this chart is built</p>
+                                                <button @click="closeInfo" class="text-base text-gray-500 hover:text-black">×</button>
+                                            </div>
+                                            <ul class="mt-2 space-y-1.5 text-black">
+                                                <li><strong>Source:</strong> <code class="rounded bg-gray-100 px-1 font-mono">orders_history</code> filtered to <strong>#{{ acc.account_number }}</strong> only</li>
+                                                <li><strong>Metric:</strong> <code>pnl</code> = profit + swap + commission per closed trade</li>
+                                                <li><strong>Bucket:</strong> grouped by close-day (GMT+8), then cumulated</li>
+                                                <li><strong>Window:</strong> last 60 trading days ({{ acc.profit_series.length }} day{{ acc.profit_series.length === 1 ? '' : 's' }} with closes)</li>
+                                                <li><strong>Refresh:</strong> only when a new trade closes</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                    <svg viewBox="0 0 280 44" class="h-11 w-[280px] flex-shrink-0">
+                                        <defs>
+                                            <linearGradient :id="`spark-grad-${acc.id}`" x1="0" x2="0" y1="0" y2="1">
+                                                <stop offset="0%"   :stop-color="sparkPath(acc.profit_series, 280, 44).color" stop-opacity="0.30"/>
+                                                <stop offset="100%" :stop-color="sparkPath(acc.profit_series, 280, 44).color" stop-opacity="0"/>
+                                            </linearGradient>
+                                        </defs>
+                                        <line x1="0" x2="280"
+                                              :y1="sparkPath(acc.profit_series, 280, 44).max <= 0 ? 6 : (sparkPath(acc.profit_series, 280, 44).min >= 0 ? 38 : 22)"
+                                              :y2="sparkPath(acc.profit_series, 280, 44).max <= 0 ? 6 : (sparkPath(acc.profit_series, 280, 44).min >= 0 ? 38 : 22)"
+                                              stroke="#d1d5db" stroke-width="0.5" stroke-dasharray="2 2"/>
+                                        <path :d="sparkPath(acc.profit_series, 280, 44).area"
+                                              :fill="`url(#spark-grad-${acc.id})`" stroke="none"/>
+                                        <path :d="sparkPath(acc.profit_series, 280, 44).d"
                                               fill="none"
-                                              :stroke="sparkPath(acc.equity_series, 260, 40).color"
-                                              stroke-width="2"/>
+                                              :stroke="sparkPath(acc.profit_series, 280, 44).color"
+                                              stroke-width="1.5"
+                                              stroke-linejoin="round"
+                                              stroke-linecap="round"/>
+                                        <circle
+                                            :cx="sparkPath(acc.profit_series, 280, 44).points.at(-1).x"
+                                            :cy="sparkPath(acc.profit_series, 280, 44).points.at(-1).y"
+                                            r="2.5"
+                                            :fill="sparkPath(acc.profit_series, 280, 44).color"
+                                            stroke="white" stroke-width="1.2"/>
                                     </svg>
+
+                                    <div class="flex flex-col items-end">
+                                        <p class="font-mono text-sm font-bold"
+                                           :class="pctClass(sparkPath(acc.profit_series, 280, 44).last)">
+                                            {{ fmt(sparkPath(acc.profit_series, 280, 44).last) }}
+                                        </p>
+                                        <p class="text-[11px] text-gray-600">cumulative PnL</p>
+                                    </div>
                                 </div>
                             </div>
 
@@ -471,7 +728,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 </div>
                             </div>
                         </div>
-                    </div>
+                        </div>
+                    </template>
                 </section>
 
             </div>

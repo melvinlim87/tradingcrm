@@ -6,6 +6,7 @@ use App\Jobs\AnalyzeCurrencyJob;
 use App\Models\ChartRequest;
 use App\Models\CurrencyAnalysis;
 use App\Models\ForexNews;
+use App\Models\NewsFetchRequest;
 use App\Models\OrderOpen;
 use App\Models\OrderPending;
 use Carbon\CarbonImmutable;
@@ -162,6 +163,52 @@ class AnalysisController extends Controller
         $analysis = CurrencyAnalysis::with([])->findOrFail($id);
 
         return response()->json($analysis);
+    }
+
+    /**
+     * Queue an on-demand MT5 news fetch. EA picks it up within ~10s, pulls
+     * MqlCalendarValue/Event/Country, pushes to /api/ea/news, then marks done.
+     * The frontend polls /analysis/news-refresh-status to know when it's ready.
+     */
+    public function refreshMt5News(Request $request): JsonResponse
+    {
+        // Dedupe: if there's an in-flight request <2 min old, return it instead of creating a new one
+        $existing = NewsFetchRequest::whereIn('status', ['pending', 'in_progress'])
+            ->where('created_at', '>=', now()->subMinutes(2))
+            ->latest('id')
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'id'      => $existing->id,
+                'status'  => $existing->status,
+                'message' => 'A refresh is already in flight — waiting for the EA to pick it up.',
+            ]);
+        }
+
+        $req = NewsFetchRequest::create([
+            'status'       => 'pending',
+            'requested_by' => $request->user()?->id,
+        ]);
+
+        return response()->json([
+            'id'      => $req->id,
+            'status'  => $req->status,
+            'message' => 'Queued. The EA polls every ~10s and will fulfill this shortly.',
+        ]);
+    }
+
+    public function refreshMt5NewsStatus(int $id): JsonResponse
+    {
+        $req = NewsFetchRequest::findOrFail($id);
+        return response()->json([
+            'id'              => $req->id,
+            'status'          => $req->status,
+            'events_imported' => $req->events_imported,
+            'events_updated'  => $req->events_updated,
+            'error_message'   => $req->error_message,
+            'completed_at'    => $req->completed_at,
+        ]);
     }
 
     public function status(int $id): JsonResponse

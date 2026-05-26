@@ -26,4 +26,9 @@ Route::middleware('verify.ea')->prefix('ea')->group(function () {
     // EA pushes MT5-native calendar events (MetaQuotes has no public REST,
     // so the EA is the only conduit). Backend upserts into forex_news with source='mt5'.
     Route::post('/news', [EaNewsController::class, 'push']);
+
+    // On-demand MT5 news fetch — admin triggers from UI, EA polls + fulfills.
+    Route::get('/news-requests/pending', [EaNewsController::class, 'pending']);
+    Route::post('/news-requests/{id}/complete', [EaNewsController::class, 'complete']);
+    Route::post('/news-requests/{id}/fail',     [EaNewsController::class, 'fail']);
 });

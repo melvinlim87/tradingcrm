@@ -27,6 +27,69 @@ const newsTab = ref('this');
 const showAllImpacts = ref(false);
 const selectedNews = ref(null);
 
+// ───────────────── On-demand MT5 news refresh ─────────────────
+const refreshState = ref({ id: null, status: null, message: '', imported: 0, updated: 0 });
+let refreshPollTimer = null;
+
+const refreshMt5News = async () => {
+    refreshState.value = { id: null, status: 'requesting', message: 'Asking the EA to pull MT5 calendar...', imported: 0, updated: 0 };
+    try {
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content
+            || decodeURIComponent((document.cookie.match(/XSRF-TOKEN=([^;]+)/) || [])[1] || '');
+        const resp = await fetch(route('analysis.refresh-mt5-news'), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-XSRF-TOKEN': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+        const data = await resp.json();
+        refreshState.value = { ...refreshState.value, id: data.id, status: data.status, message: data.message };
+        startRefreshPolling(data.id);
+    } catch (e) {
+        refreshState.value = { id: null, status: 'failed', message: 'Request failed: ' + e.message, imported: 0, updated: 0 };
+    }
+};
+
+const startRefreshPolling = (id) => {
+    if (refreshPollTimer) clearInterval(refreshPollTimer);
+    let attempts = 0;
+    refreshPollTimer = setInterval(async () => {
+        attempts++;
+        try {
+            const r = await fetch(route('analysis.refresh-mt5-news.status', id), {
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' },
+            });
+            const d = await r.json();
+            refreshState.value = {
+                id,
+                status: d.status,
+                message: '',
+                imported: d.events_imported || 0,
+                updated:  d.events_updated  || 0,
+            };
+            if (d.status === 'completed') {
+                clearInterval(refreshPollTimer); refreshPollTimer = null;
+                refreshState.value.message = `✅ Imported ${d.events_imported}, updated ${d.events_updated} MT5 events`;
+                router.reload({ only: ['news'], preserveScroll: true });
+            } else if (d.status === 'failed') {
+                clearInterval(refreshPollTimer); refreshPollTimer = null;
+                refreshState.value.message = `❌ ${d.error_message || 'EA reported failure'}`;
+            } else if (attempts > 30) {
+                clearInterval(refreshPollTimer); refreshPollTimer = null;
+                refreshState.value.status = 'timeout';
+                refreshState.value.message = 'Timed out waiting for EA — is it running + WebRequest allowed?';
+            }
+        } catch (_) {}
+    }, 3000);
+};
+
+onBeforeUnmount(() => { if (refreshPollTimer) clearInterval(refreshPollTimer); });
+
 // Build a deep link to ForexFactory's calendar for the given day,
 // pre-filtered by the event title so the trader lands close to the row.
 const forexFactoryUrl = (item) => {
@@ -537,18 +600,43 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                     ({{ (news.currencies || []).join(' + ') || currentCurrency }})
                                 </span>
                             </h3>
-                            <button
-                                type="button"
-                                @click="showAllImpacts = !showAllImpacts"
-                                class="rounded-md border-2 border-black bg-white px-3 py-1.5 text-sm font-semibold text-black hover:bg-gray-100"
-                            >
-                                <template v-if="showAllImpacts">
-                                    ▲ Hide medium / low impact
-                                </template>
-                                <template v-else>
-                                    ▼ Show all impacts ({{ hiddenImpactCount }} hidden)
-                                </template>
-                            </button>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    @click="refreshMt5News"
+                                    :disabled="refreshState.status === 'requesting' || refreshState.status === 'pending' || refreshState.status === 'in_progress'"
+                                    class="rounded-md border-2 border-orange-500 bg-orange-50 px-3 py-1.5 text-sm font-bold text-orange-800 hover:bg-orange-100 disabled:opacity-60"
+                                    title="Queue an on-demand MT5 calendar fetch — EA picks it up within ~10s"
+                                >
+                                    <template v-if="refreshState.status === 'requesting' || refreshState.status === 'pending' || refreshState.status === 'in_progress'">
+                                        ⏳ Refreshing MT5 News...
+                                    </template>
+                                    <template v-else>
+                                        🔄 Refresh MT5 News
+                                    </template>
+                                </button>
+                                <button
+                                    type="button"
+                                    @click="showAllImpacts = !showAllImpacts"
+                                    class="rounded-md border-2 border-black bg-white px-3 py-1.5 text-sm font-semibold text-black hover:bg-gray-100"
+                                >
+                                    <template v-if="showAllImpacts">▲ Hide medium / low impact</template>
+                                    <template v-else>▼ Show all impacts ({{ hiddenImpactCount }} hidden)</template>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Refresh status banner -->
+                        <div v-if="refreshState.status && refreshState.status !== 'completed' || refreshState.message" class="mt-3">
+                            <div v-if="refreshState.status === 'completed'" class="rounded-md bg-green-50 px-3 py-2 text-sm text-green-800">
+                                {{ refreshState.message }}
+                            </div>
+                            <div v-else-if="refreshState.status === 'failed' || refreshState.status === 'timeout'" class="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+                                {{ refreshState.message }}
+                            </div>
+                            <div v-else-if="refreshState.status" class="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                                <span class="font-bold">{{ refreshState.status }}</span> — {{ refreshState.message || 'Polling backend / waiting for EA...' }}
+                            </div>
                         </div>
                     </div>
 

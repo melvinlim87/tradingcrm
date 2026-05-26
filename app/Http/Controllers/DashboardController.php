@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AccountSnapshot;
 use App\Models\Mt5Account;
 use App\Models\OrderHistory;
 use App\Models\OrderOpen;
@@ -34,19 +33,9 @@ class DashboardController extends Controller
                     ->limit(50)
                     ->get());
 
-                // Sparkline data — last 60 snapshots of equity for this account
-                $equitySeries = AccountSnapshot::where('mt5_account_id', $account->id)
-                    ->orderByDesc('recorded_at')
-                    ->limit(60)
-                    ->get(['equity', 'recorded_at'])
-                    ->reverse()
-                    ->values()
-                    ->map(fn ($s) => [
-                        't' => $s->recorded_at->getTimestamp(),
-                        'v' => (float) $s->equity,
-                    ])
-                    ->all();
-                $account->setAttribute('equity_series', $equitySeries);
+                // PROFIT chart (cumulative closed PnL grouped by day) — won't twitch
+                // every 10s like equity. Updates only when a trade closes.
+                $account->setAttribute('profit_series', $this->buildProfitSeriesForAccounts([$account->id]));
 
                 return $account;
             });
@@ -56,7 +45,9 @@ class DashboardController extends Controller
         $totalMargin      = (float) $accounts->sum('margin');
         $totalFreeMargin  = (float) $accounts->sum('free_margin');
         $totalFloatingPnl = (float) $accounts->sum('floating_pnl');
-        $closedProfit     = (float) OrderHistory::sum('pnl');
+        $closedProfit     = (float) OrderHistory::whereIn(
+            'mt5_account_id', $accounts->pluck('id')
+        )->sum('pnl');
 
         $floatingPct = $totalBalance > 0
             ? round(($totalFloatingPnl / $totalBalance) * 100, 2)
@@ -66,8 +57,8 @@ class DashboardController extends Controller
         $maxAbsDdPct   = (float) ($accounts->max('max_abs_drawdown_pct') ?? 0);
         $maxEqDdPct    = (float) ($accounts->max('max_eq_drawdown_pct') ?? 0);
 
-        // Overall equity sparkline — sum equity per snapshot timestamp (bucket by minute)
-        $overallSeries = $this->buildOverallEquitySeries($accounts);
+        // Overall profit curve across all visible accounts
+        $overallProfitSeries = $this->buildProfitSeriesForAccounts($accounts->pluck('id')->all());
 
         $overall = [
             'account_count'        => $accounts->count(),
@@ -81,7 +72,7 @@ class DashboardController extends Controller
             'max_drawdown'         => $maxDrawdown,
             'max_abs_drawdown_pct' => $maxAbsDdPct,
             'max_eq_drawdown_pct'  => $maxEqDdPct,
-            'equity_series'        => $overallSeries,
+            'profit_series'        => $overallProfitSeries,
         ];
 
         return Inertia::render('Dashboard', [
@@ -92,23 +83,50 @@ class DashboardController extends Controller
     }
 
     /**
-     * Combine each account's latest equity series into a single overall curve.
-     * Buckets by minute and sums.
+     * Cumulative closed-PnL curve grouped by close day.
+     * Returns an array of points: [{ t: unix, v: cumulative_pnl, label: 'YYYY-MM-DD' }, ...].
+     *
+     * This is the "equity curve" most traders actually care about — based on
+     * realized P&L only. Doesn't move with every tick like floating equity does.
+     *
+     * @return array<array{t:int, v:float, label:string, day_pnl:float}>
      */
-    private function buildOverallEquitySeries($accounts): array
+    private function buildProfitSeriesForAccounts(array $accountIds): array
     {
-        $buckets = [];
-        foreach ($accounts as $acc) {
-            foreach ((array) ($acc->equity_series ?? []) as $point) {
-                $minute = (int) (floor($point['t'] / 60) * 60);
-                $buckets[$minute] = ($buckets[$minute] ?? 0) + $point['v'];
-            }
+        if (empty($accountIds)) return [];
+
+        $trades = OrderHistory::whereIn('mt5_account_id', $accountIds)
+            ->whereNotNull('closed_at')
+            ->orderBy('closed_at')
+            ->get(['closed_at', 'pnl']);
+
+        if ($trades->isEmpty()) return [];
+
+        // Bucket by day (Asia/Singapore) — sum each day's PnL
+        $byDay = [];
+        foreach ($trades as $t) {
+            $day = optional($t->closed_at)
+                ->setTimezone('Asia/Singapore')
+                ->format('Y-m-d');
+            if (! $day) continue;
+            $byDay[$day] = ($byDay[$day] ?? 0) + (float) $t->pnl;
         }
-        ksort($buckets);
-        $out = [];
-        foreach ($buckets as $t => $v) {
-            $out[] = ['t' => $t, 'v' => round($v, 2)];
+        ksort($byDay);
+
+        // Accumulate
+        $cumulative = 0.0;
+        $series = [];
+        foreach ($byDay as $day => $dayPnl) {
+            $cumulative += $dayPnl;
+            $series[] = [
+                't'       => strtotime($day),
+                'v'       => round($cumulative, 2),
+                'label'   => $day,
+                'day_pnl' => round($dayPnl, 2),
+            ];
         }
-        return array_slice($out, -60);    // keep last 60 buckets
+
+        // Keep last 60 trading days
+        return array_slice($series, -60);
     }
 }

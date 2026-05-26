@@ -27,6 +27,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/analysis/generate', [AnalysisController::class, 'generate'])->name('analysis.generate');
     Route::get('/analysis/{id}', [AnalysisController::class, 'show'])->name('analysis.show');
     Route::get('/analysis/{id}/status', [AnalysisController::class, 'status'])->name('analysis.status');
+    Route::post('/analysis/refresh-mt5-news', [AnalysisController::class, 'refreshMt5News'])->name('analysis.refresh-mt5-news');
+    Route::get('/analysis/news-refresh/{id}/status', [AnalysisController::class, 'refreshMt5NewsStatus'])->name('analysis.refresh-mt5-news.status');
 
     // User management (administrator + admin only — enforced in controller)
     Route::get('/users', [UserController::class, 'index'])->name('users.index');
