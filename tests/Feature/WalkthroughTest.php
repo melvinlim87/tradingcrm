@@ -99,34 +99,92 @@ class WalkthroughTest extends TestCase
             ->assertSessionHasErrors('symbol');
     }
 
+    public function test_users_index_renders_for_administrator(): void
+    {
+        $admin = User::where('email', 'admin@email.com')->firstOrFail();
+        $resp = $this->actingAs($admin)->get('/users');
+        $resp->assertOk();
+        $resp->assertInertia(fn ($page) => $page
+            ->component('Users/Index')
+            ->has('users')
+            ->where('viewer_role', 'administrator'));
+    }
+
+    public function test_user_role_cannot_access_users_page(): void
+    {
+        $u = User::create([
+            'name' => 'Viewer Vic',
+            'email' => 'vic-test-only@test.com',
+            'password' => bcrypt('Test123!'),
+            'role' => 'user',
+            'email_verified_at' => now(),
+        ]);
+        $this->actingAs($u)->get('/users')->assertStatus(403);
+    }
+
+    public function test_administrator_creates_admin_then_admin_creates_user(): void
+    {
+        $administrator = User::where('email', 'admin@email.com')->firstOrFail();
+
+        // Administrator creates an admin
+        $this->actingAs($administrator)
+            ->post('/users', [
+                'name'  => 'Manager Mike',
+                'email' => 'mike-test@test.com',
+                'password' => 'Test1234!',
+                'role'  => 'admin',
+            ])->assertRedirect(route('users.index'));
+
+        $mike = User::where('email', 'mike-test@test.com')->firstOrFail();
+        $this->assertSame('admin', $mike->role);
+        $this->assertSame($administrator->id, (int) $mike->created_by);
+
+        // Admin can only create 'user' role users
+        $this->actingAs($mike)
+            ->post('/users', [
+                'name' => 'Viewer Val',
+                'email' => 'val-test@test.com',
+                'password' => 'Test1234!',
+                'role' => 'admin',     // not allowed for admin
+            ])->assertSessionHasErrors('role');
+
+        $this->actingAs($mike)
+            ->post('/users', [
+                'name' => 'Viewer Val',
+                'email' => 'val-test@test.com',
+                'password' => 'Test1234!',
+                'role' => 'user',
+            ])->assertRedirect(route('users.index'));
+
+        $val = User::where('email', 'val-test@test.com')->firstOrFail();
+        $this->assertSame('user', $val->role);
+        $this->assertSame($mike->id, (int) $val->created_by);
+    }
+
     public function test_account_crud(): void
     {
         $admin = User::where('email', 'admin@email.com')->firstOrFail();
         $this->actingAs($admin);
 
-        // CREATE
+        // CREATE — nickname is gone; account_name now auto-populated from EA push
         $this->post('/accounts', [
             'account_number' => 9991231,
-            'nickname' => 'Live Test',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 5.0,
         ])->assertRedirect(route('accounts.index'));
 
         $acc = Mt5Account::where('account_number', 9991231)->first();
         $this->assertNotNull($acc);
-        $this->assertSame('Live Test', $acc->nickname);
         $this->assertEquals(5.0, (float) $acc->drawdown_alert_threshold);
 
         // UPDATE
         $this->put("/accounts/{$acc->id}", [
             'account_number' => 9991231,
-            'nickname' => 'Live Test (renamed)',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 3.0,
         ])->assertRedirect(route('accounts.index'));
 
         $acc->refresh();
-        $this->assertSame('Live Test (renamed)', $acc->nickname);
         $this->assertEquals(3.0, (float) $acc->drawdown_alert_threshold);
 
         // DELETE
@@ -141,14 +199,12 @@ class WalkthroughTest extends TestCase
 
         $this->post('/accounts', [
             'account_number' => 7777777,
-            'nickname' => 'A',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 2.0,
         ])->assertRedirect();
 
         $this->post('/accounts', [
             'account_number' => 7777777,
-            'nickname' => 'B',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 2.0,
         ])->assertSessionHasErrors('account_number');
@@ -173,7 +229,7 @@ class WalkthroughTest extends TestCase
     {
         $account = Mt5Account::create([
             'account_number' => 9991231,
-            'nickname' => 'Live Test',
+            'account_name' => 'Live Test',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 5.0,
             'status' => 'offline',
@@ -246,7 +302,7 @@ class WalkthroughTest extends TestCase
     {
         $account = Mt5Account::create([
             'account_number' => 3000333,
-            'nickname' => 'Replace Test',
+            'account_name' => 'Replace Test',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 2.0,
         ]);
@@ -270,7 +326,7 @@ class WalkthroughTest extends TestCase
     {
         $account = Mt5Account::create([
             'account_number' => 4000444,
-            'nickname' => 'Dedupe Test',
+            'account_name' => 'Dedupe Test',
             'broker' => 'RS Finance',
             'drawdown_alert_threshold' => 2.0,
         ]);

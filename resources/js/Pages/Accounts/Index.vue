@@ -1,12 +1,17 @@
 <script setup>
 import { ref, computed } from 'vue';
+// (computed already imported)
 import { Head, useForm, usePage, router } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
 const props = defineProps({
     accounts: { type: Array, default: () => [] },
     unbound_topics: { type: Array, default: () => [] },
+    viewer_role: { type: String, default: 'user' },
+    can_create: { type: Boolean, default: false },
 });
+
+const isAdministrator = computed(() => props.viewer_role === 'administrator');
 
 const flash = computed(() => usePage().props.flash || {});
 
@@ -15,7 +20,6 @@ const editingId = ref(null);
 
 const form = useForm({
     account_number: '',
-    nickname: '',
     broker: 'RS Finance',
     drawdown_alert_threshold: 2.0,
     telegram_topic_id: null,
@@ -32,7 +36,6 @@ const openCreate = () => {
 const openEdit = (account) => {
     editingId.value = account.id;
     form.account_number = account.account_number;
-    form.nickname = account.nickname || '';
     form.broker = account.broker;
     form.drawdown_alert_threshold = account.drawdown_alert_threshold;
     form.telegram_topic_id = account.telegram_topic?.id ?? null;
@@ -102,12 +105,14 @@ const statusClass = (status) => ({
                             <span class="ml-2 text-sm font-normal text-gray-500">({{ accounts.length }})</span>
                         </h3>
                         <button
+                            v-if="can_create"
                             type="button"
                             @click="openCreate"
                             class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
                         >
                             + Add Account
                         </button>
+                        <span v-else class="text-sm italic text-black">Your role ({{ viewer_role }}) cannot add accounts.</span>
                     </div>
 
                     <!-- Form -->
@@ -131,15 +136,10 @@ const statusClass = (status) => ({
                             </div>
 
                             <div>
-                                <label class="block text-sm font-medium text-gray-700">Nickname</label>
-                                <input
-                                    v-model="form.nickname"
-                                    type="text"
-                                    placeholder="e.g. Live #1 — main"
-                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                />
-                                <p v-if="form.errors.nickname" class="mt-1 text-xs text-red-600">
-                                    {{ form.errors.nickname }}
+                                <label class="block text-sm font-medium text-gray-700">Account Name</label>
+                                <p class="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                                    Auto-filled from MT5 once the EA pushes data
+                                    (uses <code class="font-mono">ACCOUNT_NAME</code> — the broker-side holder name).
                                 </p>
                             </div>
 
@@ -221,7 +221,7 @@ const statusClass = (status) => ({
                             <thead class="bg-gray-50">
                                 <tr class="text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                                     <th class="px-6 py-3">Account #</th>
-                                    <th class="px-6 py-3">Nickname</th>
+                                    <th class="px-6 py-3">Account Name</th>
                                     <th class="px-6 py-3">Broker</th>
                                     <th class="px-6 py-3 text-right">Balance</th>
                                     <th class="px-6 py-3 text-right">Equity</th>
@@ -229,6 +229,7 @@ const statusClass = (status) => ({
                                     <th class="px-6 py-3 text-right">Alert ≥</th>
                                     <th class="px-6 py-3">Telegram</th>
                                     <th class="px-6 py-3">Status</th>
+                                    <th v-if="isAdministrator" class="px-6 py-3">Added By</th>
                                     <th class="px-6 py-3 text-right">Actions</th>
                                 </tr>
                             </thead>
@@ -243,7 +244,7 @@ const statusClass = (status) => ({
                                         #{{ acc.account_number }}
                                     </td>
                                     <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
-                                        {{ acc.nickname || '—' }}
+                                        {{ acc.account_name || '—' }}
                                     </td>
                                     <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-700">
                                         {{ acc.broker }}
@@ -268,6 +269,12 @@ const statusClass = (status) => ({
                                         <span :class="['rounded-full px-2 py-0.5 text-xs font-medium', statusClass(acc.status)]">
                                             {{ acc.status }}
                                         </span>
+                                    </td>
+                                    <td v-if="isAdministrator" class="whitespace-nowrap px-6 py-4 text-sm text-black">
+                                        <span v-if="acc.creator">
+                                            {{ acc.creator.name }} <span class="text-xs">({{ acc.creator.role }})</span>
+                                        </span>
+                                        <span v-else class="italic text-black">—</span>
                                     </td>
                                     <td class="whitespace-nowrap px-6 py-4 text-right text-sm">
                                         <button

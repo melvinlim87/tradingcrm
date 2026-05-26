@@ -25,6 +25,8 @@ class ForexNews extends Model
         'notes',
         'event_at',
         'raw_date',
+        'source',
+        'mt5_event_id',
     ];
 
     protected $casts = [

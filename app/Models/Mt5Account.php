@@ -16,18 +16,22 @@ class Mt5Account extends Model
 
     protected $fillable = [
         'account_number',
-        'nickname',
+        'account_name',
         'broker',
         'server',
         'currency',
         'leverage',
         'balance',
         'equity',
+        'initial_balance',
+        'peak_equity',
         'margin',
         'free_margin',
         'margin_level',
         'floating_pnl',
         'drawdown_percent',
+        'max_abs_drawdown_pct',
+        'max_eq_drawdown_pct',
         'drawdown_alert_threshold',
         'status',
         'last_ping_at',
@@ -39,11 +43,15 @@ class Mt5Account extends Model
         'leverage' => 'integer',
         'balance' => 'decimal:2',
         'equity' => 'decimal:2',
+        'initial_balance' => 'decimal:2',
+        'peak_equity' => 'decimal:2',
         'margin' => 'decimal:2',
         'free_margin' => 'decimal:2',
         'margin_level' => 'decimal:2',
         'floating_pnl' => 'decimal:2',
         'drawdown_percent' => 'decimal:4',
+        'max_abs_drawdown_pct' => 'decimal:4',
+        'max_eq_drawdown_pct' => 'decimal:4',
         'drawdown_alert_threshold' => 'decimal:2',
         'last_ping_at' => 'datetime',
     ];
@@ -61,8 +69,8 @@ class Mt5Account extends Model
     protected function displayName(): Attribute
     {
         return Attribute::make(
-            get: fn () => $this->nickname
-                ? "{$this->nickname} (#{$this->account_number})"
+            get: fn () => $this->account_name
+                ? "{$this->account_name} (#{$this->account_number})"
                 : "#{$this->account_number}",
         );
     }

@@ -6,6 +6,8 @@ use App\Jobs\AnalyzeCurrencyJob;
 use App\Models\ChartRequest;
 use App\Models\CurrencyAnalysis;
 use App\Models\ForexNews;
+use App\Models\OrderOpen;
+use App\Models\OrderPending;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -18,6 +20,17 @@ class AnalysisController extends Controller
     public function index(Request $request): InertiaResponse
     {
         $symbol = strtoupper($request->query('symbol', 'AUDUSD'));
+        // Explicit currency override (so SGD doesn't get read as "USD"
+        // from "USDSGD". The Vue selectCurrency() always sends this.)
+        $currency = strtoupper($request->query('currency', ''));
+        if ($currency === '' || strlen($currency) !== 3) {
+            // Fallback heuristic: pick a 3-char chunk that is NOT USD
+            // (so USDSGD → SGD, USDCAD → CAD, EURUSD → EUR, AUDUSD → AUD)
+            $left = substr($symbol, 0, 3);
+            $right = substr($symbol, 3, 3);
+            $currency = ($left !== 'USD' && strlen($left) === 3) ? $left
+                : (($right !== '' && strlen($right) === 3) ? $right : $left);
+        }
 
         $latest = CurrencyAnalysis::where('symbol', $symbol)
             ->latest('created_at')
@@ -37,13 +50,32 @@ class AnalysisController extends Controller
 
         $news = $this->fetchNewsForPair($symbol);
 
+        // Distinct symbols currently being traded (open positions + pending orders),
+        // normalised (strip broker suffix like # / .m / .raw)
+        $tradedSymbols = $this->tradedSymbols();
+
         return Inertia::render('Analysis/Index', [
             'symbol' => $symbol,
+            'currency' => $currency,
             'analysis' => $latest,
             'history' => $history,
             'chart_request' => $activeChartRequest,
             'news' => $news,
+            'traded_symbols' => $tradedSymbols,
         ]);
+    }
+
+    private function tradedSymbols(): array
+    {
+        $open    = OrderOpen::query()->distinct()->pluck('symbol');
+        $pending = OrderPending::query()->distinct()->pluck('symbol');
+
+        return $open->merge($pending)
+            ->map(fn ($s) => preg_replace('/[^A-Z]/', '', strtoupper((string) $s)))
+            ->filter(fn ($s) => strlen($s) >= 6)   // need at least a pair
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**
@@ -64,17 +96,27 @@ class AnalysisController extends Controller
                 ->get([
                     'id', 'title', 'currency', 'impact',
                     'forecast', 'previous', 'actual', 'event_at',
+                    'source', 'mt5_event_id',
+                    'measures', 'usual_effect', 'traders_care', 'notes',
                 ])
                 ->map(function ($n) {
                     return [
-                        'id' => $n->id,
-                        'title' => $n->title,
-                        'currency' => $n->currency,
-                        'impact' => strtoupper($n->impact),
-                        'forecast' => $n->forecast,
-                        'previous' => $n->previous,
-                        'actual' => $n->actual,
-                        'event_at' => optional($n->event_at)->setTimezone('Asia/Singapore')->format('Y-m-d H:i'),
+                        'id'          => $n->id,
+                        'title'       => $n->title,
+                        'currency'    => $n->currency,
+                        'impact'      => strtoupper($n->impact),
+                        'forecast'    => $n->forecast,
+                        'previous'    => $n->previous,
+                        'actual'      => $n->actual,
+                        'event_at'    => optional($n->event_at)->setTimezone('Asia/Singapore')->format('Y-m-d H:i'),
+                        'event_at_iso'=> optional($n->event_at)->setTimezone('Asia/Singapore')->toIso8601String(),
+                        'source'      => $n->source ?: 'forexfactory',
+                        'mt5_event_id'=> $n->mt5_event_id,
+                        // MT5 popup details (only populated for some events)
+                        'measures'    => $n->measures,
+                        'usual_effect'=> $n->usual_effect,
+                        'traders_care'=> $n->traders_care,
+                        'notes'       => $n->notes,
                     ];
                 });
 

@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ForexNews;
+use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class EaNewsController extends Controller
 {
@@ -43,5 +46,97 @@ class EaNewsController extends Controller
             }),
             'as_of' => $now->setTimezone('Asia/Singapore')->format('Y-m-d H:i'),
         ]);
+    }
+
+    /**
+     * Receive a batch of MT5-native calendar events from the EA and upsert into forex_news.
+     * MetaQuotes does NOT expose a public REST API for the MT5 calendar, so the EA acts as
+     * the only conduit: it polls MqlCalendarValue/Event/Country via MQL5 and POSTs to us.
+     *
+     * Expected payload:
+     *  {
+     *    "events": [
+     *      { "event_id": 12345, "title": "...", "currency": "USD", "impact": "HIGH|MEDIUM|LOW",
+     *        "forecast": "...", "previous": "...", "actual": "...",
+     *        "event_at": "2026-05-22T14:30:00Z" },
+     *      ...
+     *    ]
+     *  }
+     */
+    public function push(Request $request): JsonResponse
+    {
+        $events = (array) $request->input('events', []);
+        if (empty($events)) {
+            return response()->json(['error' => 'No events provided'], 422);
+        }
+
+        $imported = 0;
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ($events as $e) {
+            try {
+                $eventAt = $this->parseDate($e['event_at'] ?? null);
+                $title = trim((string) ($e['title'] ?? ''));
+                if (! $eventAt || $title === '') {
+                    $skipped++;
+                    continue;
+                }
+
+                $record = ForexNews::updateOrCreate(
+                    [
+                        'title' => $title,
+                        'event_at' => $eventAt,
+                    ],
+                    [
+                        'currency' => strtoupper(trim((string) ($e['currency'] ?? ''))),
+                        'impact' => $this->normalizeImpact($e['impact'] ?? 'LOW'),
+                        'forecast' => $this->nullIfEmpty($e['forecast'] ?? null),
+                        'previous' => $this->nullIfEmpty($e['previous'] ?? null),
+                        'actual' => $this->nullIfEmpty($e['actual'] ?? null),
+                        'raw_date' => $e['event_at'] ?? null,
+                        'source' => 'mt5',
+                        'mt5_event_id' => isset($e['event_id']) ? (int) $e['event_id'] : null,
+                    ],
+                );
+
+                $record->wasRecentlyCreated ? $imported++ : $updated++;
+            } catch (Throwable $ex) {
+                Log::warning('EA MT5 news push: bad item', [
+                    'error' => $ex->getMessage(),
+                    'item'  => $e,
+                ]);
+                $skipped++;
+            }
+        }
+
+        return response()->json([
+            'imported' => $imported,
+            'updated'  => $updated,
+            'skipped'  => $skipped,
+        ]);
+    }
+
+    private function parseDate(?string $raw): ?Carbon
+    {
+        if (! $raw) return null;
+        try { return Carbon::parse($raw)->utc(); } catch (Throwable) { return null; }
+    }
+
+    private function normalizeImpact(?string $value): string
+    {
+        $value = strtoupper(trim((string) $value));
+        return match ($value) {
+            'HIGH'           => 'HIGH',
+            'MED', 'MEDIUM'  => 'MEDIUM',
+            'HOLIDAY'        => 'HOLIDAY',
+            default          => 'LOW',
+        };
+    }
+
+    private function nullIfEmpty(?string $v): ?string
+    {
+        $v = trim((string) $v);
+        return $v === '' ? null : $v;
     }
 }

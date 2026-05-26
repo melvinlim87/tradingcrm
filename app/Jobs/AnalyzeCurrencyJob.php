@@ -83,8 +83,15 @@ class AnalyzeCurrencyJob implements ShouldQueue
             $currencies = $this->extractCurrencies($analysis->symbol);
             $now = CarbonImmutable::now('Asia/Singapore');
 
-            $newsLast = $this->fetchNewsForWeek($currencies, $now->subWeek());
+            // PAST: last 1 month of HIGH-impact events (was 1 week)
+            $newsLast = $this->fetchNewsBetween(
+                $currencies,
+                $now->subMonth(),
+                $now->subDay()->endOfDay(),
+            );
+            // THIS WEEK: from start of week to end of week
             $newsThis = $this->fetchNewsForWeek($currencies, $now);
+            // NEXT WEEK
             $newsNext = $this->fetchNewsForWeek($currencies, $now->addWeek());
 
             $prompt = $renderer->render([
@@ -156,13 +163,19 @@ class AnalyzeCurrencyJob implements ShouldQueue
 
     private function fetchNewsForWeek(array $currencies, CarbonImmutable $anchor)
     {
-        $start = $anchor->startOfWeek()->utc();
-        $end = $anchor->endOfWeek()->utc();
+        return $this->fetchNewsBetween(
+            $currencies,
+            $anchor->startOfWeek(),
+            $anchor->endOfWeek(),
+        );
+    }
 
+    private function fetchNewsBetween(array $currencies, CarbonImmutable $from, CarbonImmutable $to)
+    {
         // Only HIGH impact events are fed to the AI — keeps the prompt focused
         // on news that actually moves price, and cuts OpenRouter token cost.
         return ForexNews::forCurrencies($currencies)
-            ->between($start, $end)
+            ->between($from->utc(), $to->utc())
             ->where('impact', 'HIGH')
             ->orderBy('event_at')
             ->get();

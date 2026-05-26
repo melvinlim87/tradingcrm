@@ -4,6 +4,7 @@ use App\Http\Controllers\AnalysisController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Mt5AccountController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -26,6 +27,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/analysis/generate', [AnalysisController::class, 'generate'])->name('analysis.generate');
     Route::get('/analysis/{id}', [AnalysisController::class, 'show'])->name('analysis.show');
     Route::get('/analysis/{id}/status', [AnalysisController::class, 'status'])->name('analysis.status');
+
+    // User management (administrator + admin only — enforced in controller)
+    Route::get('/users', [UserController::class, 'index'])->name('users.index');
+    Route::post('/users', [UserController::class, 'store'])->name('users.store');
+    Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
+    Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+
+    // Administrator-only — dedicated Admins management page
+    Route::get('/admins', [UserController::class, 'admins'])->name('admins.index');
 });
 
 Route::middleware('auth')->group(function () {

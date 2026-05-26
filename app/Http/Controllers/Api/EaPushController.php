@@ -79,20 +79,47 @@ class EaPushController extends Controller
         $floatingPnl  = round($equity - $balance, 2);
         $drawdownPct  = $balance > 0 ? round((($balance - $equity) / $balance) * 100, 4) : 0;
 
+        // Initialize baseline on first sight, otherwise keep stored value
+        $initialBalance = $account->initial_balance !== null
+            ? (float) $account->initial_balance
+            : $balance;
+
+        // Running peak equity (peak-to-valley denominator)
+        $peakEquity = $account->peak_equity !== null
+            ? max((float) $account->peak_equity, $equity)
+            : max($balance, $equity);
+
+        // Max Absolute Drawdown % — equity vs initial deposit, never decreases
+        $currentAbsDdPct = $initialBalance > 0
+            ? max(0, ($initialBalance - $equity) / $initialBalance * 100)
+            : 0;
+        $maxAbsDdPct = max((float) $account->max_abs_drawdown_pct, $currentAbsDdPct);
+
+        // Max Equity Drawdown % — peak-to-valley, never decreases
+        $currentEqDdPct = $peakEquity > 0
+            ? max(0, ($peakEquity - $equity) / $peakEquity * 100)
+            : 0;
+        $maxEqDdPct = max((float) $account->max_eq_drawdown_pct, $currentEqDdPct);
+
         $account->update([
-            'broker'           => $a['broker'] ?? $account->broker,
-            'server'           => $a['server'] ?? $account->server,
-            'currency'         => $a['currency'] ?? $account->currency,
-            'leverage'         => (int) ($a['leverage'] ?? $account->leverage ?? 0) ?: $account->leverage,
-            'balance'          => $balance,
-            'equity'           => $equity,
-            'margin'           => (float) ($a['margin'] ?? 0),
-            'free_margin'      => (float) ($a['free_margin'] ?? 0),
-            'margin_level'     => isset($a['margin_level']) ? (float) $a['margin_level'] : null,
-            'floating_pnl'     => $floatingPnl,
-            'drawdown_percent' => max(0, $drawdownPct),
-            'status'           => 'online',
-            'last_ping_at'     => now(),
+            'broker'               => $a['broker'] ?? $account->broker,
+            'server'               => $a['server'] ?? $account->server,
+            'account_name'         => $a['name']   ?? $account->account_name,
+            'currency'             => $a['currency'] ?? $account->currency,
+            'leverage'             => (int) ($a['leverage'] ?? $account->leverage ?? 0) ?: $account->leverage,
+            'balance'              => $balance,
+            'equity'               => $equity,
+            'initial_balance'      => $initialBalance,
+            'peak_equity'          => $peakEquity,
+            'margin'               => (float) ($a['margin'] ?? 0),
+            'free_margin'          => (float) ($a['free_margin'] ?? 0),
+            'margin_level'         => isset($a['margin_level']) ? (float) $a['margin_level'] : null,
+            'floating_pnl'         => $floatingPnl,
+            'drawdown_percent'     => max(0, $drawdownPct),
+            'max_abs_drawdown_pct' => round($maxAbsDdPct, 4),
+            'max_eq_drawdown_pct'  => round($maxEqDdPct, 4),
+            'status'               => 'online',
+            'last_ping_at'         => now(),
         ]);
     }
 

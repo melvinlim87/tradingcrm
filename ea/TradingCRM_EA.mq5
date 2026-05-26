@@ -16,10 +16,10 @@
 //|         add: http://127.0.0.1:8000                               |
 //+------------------------------------------------------------------+
 #property copyright "TradingCRM"
-#property version   "3.20"
+#property version   "3.40"
 #property strict
 
-#define EA_VERSION "3.20"
+#define EA_VERSION "3.40"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -31,10 +31,13 @@ input string  InpEaToken      = "CHANGE_ME_TO_64_CHAR_RANDOM_STRING";    // Matc
 
 //=== TIMERS =====================================================================
 input group           "=== TIMERS ==="
-input int     InpSignalInterval     = 600;  // GET /signals every N sec (0 = disable)
-input int     InpRiskPushInterval   = 10;   // POST /push every N sec
-input int     InpChartPollInterval  = 10;   // GET /chart-requests/pending every N sec
-input int     InpNewsRefreshSec     = 60;   // News panel refresh interval (0 = disable)
+input int     InpSignalInterval     = 600;   // GET /signals every N sec (0 = disable)
+input int     InpRiskPushInterval   = 10;    // POST /push every N sec
+input int     InpChartPollInterval  = 10;    // GET /chart-requests/pending every N sec
+input int     InpNewsRefreshSec     = 60;    // On-chart News panel refresh (0 = disable)
+input int     InpNewsPushInterval   = 900;   // POST MT5 calendar → backend every N sec (0 = disable)
+input int     InpNewsPushWindowH    = 168;   // How far ahead to look (168h = 7d)
+input int     InpNewsPushBackH      = 168;   // How far back to look (168h = 7d)
 
 //=== NEWS PANEL (on-chart) ======================================================
 // Defaults are tuned to drop into the empty 6th cell of CDashboard
@@ -177,9 +180,9 @@ int OnInit()
    Print("  Build flags: ResolveBrokerSymbol=ON  NewsPanel=ON");
    Print("==================================================");
    PrintFormat("  Backend: %s", InpBackendBase);
-   PrintFormat("  Timers — Signal:%ds  RiskPush:%ds  ChartPoll:%ds  News:%ds",
+   PrintFormat("  Timers — Signal:%ds  RiskPush:%ds  ChartPoll:%ds  NewsPanel:%ds  NewsPush:%ds",
                InpSignalInterval, InpRiskPushInterval, InpChartPollInterval,
-               InpNewsRefreshSec);
+               InpNewsRefreshSec, InpNewsPushInterval);
 
    if(!g_logger.Init(InpEnableCSVLog, "TradingCRM"))
    {
@@ -291,6 +294,14 @@ void OnTimer()
       g_last_news_refresh = current_time;
    }
 
+   static datetime last_news_push = 0;
+   if(InpNewsPushInterval > 0 &&
+      current_time - last_news_push >= InpNewsPushInterval)
+   {
+      PushMt5CalendarNews();
+      last_news_push = current_time;
+   }
+
    if((current_time - g_last_dashboard_update) >= g_dashboard_update_interval)
    {
       g_last_dashboard_update = current_time;
@@ -392,6 +403,7 @@ void ExecuteOrderMT5(string type, double apiEntryPrice, double apiSL, double api
 void ExportRiskData()
 {
    long   accountNum  = AccountInfoInteger(ACCOUNT_LOGIN);
+   string accountName = AccountInfoString(ACCOUNT_NAME);    // Broker-side holder name
    string brokerName  = AccountInfoString(ACCOUNT_COMPANY);
    string serverName  = AccountInfoString(ACCOUNT_SERVER);
    string currency    = AccountInfoString(ACCOUNT_CURRENCY);
@@ -571,6 +583,7 @@ void ExportRiskData()
    string json = "{";
    json += "\"account\":{";
    json += "\"number\":" + (string)accountNum + ",";
+   json += "\"name\":\""   + accountName + "\",";
    json += "\"broker\":\"" + brokerName + "\",";
    json += "\"server\":\"" + serverName + "\",";
    json += "\"currency\":\"" + currency + "\",";
@@ -1253,6 +1266,105 @@ string Mt5ImportanceToImpact(int importance)
       case CALENDAR_IMPORTANCE_LOW:      return "LOW";
       default:                           return "LOW";
    }
+}
+
+//+------------------------------------------------------------------+
+//| Push MT5 native calendar events to backend (source = 'mt5').      |
+//| MetaQuotes has no public REST API for the calendar — the EA is    |
+//| the only conduit. Backend dedupes by (title + event_at).          |
+//+------------------------------------------------------------------+
+void PushMt5CalendarNews()
+{
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;
+
+   datetime from = TimeCurrent() - (datetime)(InpNewsPushBackH * 3600);
+   datetime to   = TimeCurrent() + (datetime)(InpNewsPushWindowH * 3600);
+
+   MqlCalendarValue values[];
+   int n = CalendarValueHistory(values, from, to);
+   if(n <= 0)
+   {
+      PrintFormat("[NewsPush] CalendarValueHistory returned %d", n);
+      return;
+   }
+
+   // Build JSON events array
+   string json = "{\"events\":[";
+   bool first = true;
+   int pushed = 0;
+   int max = MathMin(n, 500);   // cap per push to avoid huge payloads
+
+   for(int i = 0; i < max; i++)
+   {
+      MqlCalendarEvent event;
+      if(!CalendarEventById(values[i].event_id, event)) continue;
+
+      MqlCalendarCountry country;
+      if(!CalendarCountryById(event.country_id, country)) continue;
+
+      string currency = country.currency;
+      if(StringLen(currency) < 3) continue;
+
+      // Format event_at as ISO 8601 UTC
+      string eventAt = FormatIso8601(values[i].time);
+
+      // Forecast / Previous / Actual — values are in fixed-point per the event spec
+      string forecast = (values[i].forecast_value != LONG_MAX) ? DoubleToString((double)values[i].forecast_value / 1000000.0, 4) : "";
+      string previous = (values[i].prev_value     != LONG_MAX) ? DoubleToString((double)values[i].prev_value     / 1000000.0, 4) : "";
+      string actual   = (values[i].actual_value   != LONG_MAX) ? DoubleToString((double)values[i].actual_value   / 1000000.0, 4) : "";
+
+      if(!first) json += ",";
+      json += "{";
+      json += "\"event_id\":"  + IntegerToString((int)event.id) + ",";
+      json += "\"title\":\""    + JsonEscape(event.name)     + "\",";
+      json += "\"currency\":\"" + currency                   + "\",";
+      json += "\"impact\":\""   + Mt5ImportanceToImpact(event.importance) + "\",";
+      json += "\"forecast\":\"" + forecast                   + "\",";
+      json += "\"previous\":\"" + previous                   + "\",";
+      json += "\"actual\":\""   + actual                     + "\",";
+      json += "\"event_at\":\"" + eventAt                    + "Z\"";
+      json += "}";
+      first = false;
+      pushed++;
+   }
+   json += "]}";
+
+   if(pushed == 0)
+   {
+      Print("[NewsPush] No usable MT5 calendar events in window.");
+      return;
+   }
+
+   // POST to backend
+   char postData[]; char result[]; string resHeaders;
+   string headers = "Content-Type: application/json\r\n" +
+                    "Authorization: Bearer " + InpEaToken + "\r\n";
+   string url = EndpointUrl("/news");
+
+   StringToCharArray(json, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   ArrayResize(postData, ArraySize(postData) - 1);
+
+   int code = WebRequest("POST", url, headers, 30000, postData, result, resHeaders);
+   if(code >= 200 && code < 300)
+   {
+      string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+      PrintFormat("[NewsPush] Pushed %d MT5 events → HTTP %d  %s",
+                  pushed, code, StringSubstr(body, 0, 120));
+   }
+   else
+   {
+      PrintFormat("[NewsPush] HTTP %d (pushed %d events)", code, pushed);
+   }
+}
+
+string JsonEscape(string s)
+{
+   StringReplace(s, "\\", "\\\\");
+   StringReplace(s, "\"", "\\\"");
+   StringReplace(s, "\n", " ");
+   StringReplace(s, "\r", " ");
+   StringReplace(s, "\t", " ");
+   return s;
 }
 
 long ParseDisplayTime(string mmddHHMM)

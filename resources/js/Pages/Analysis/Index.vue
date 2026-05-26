@@ -5,6 +5,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
 const props = defineProps({
     symbol: { type: String, default: 'AUDUSD' },
+    currency: { type: String, default: '' },     // server-supplied, authoritative
     analysis: { type: Object, default: null },
     history: { type: Array, default: () => [] },
     chart_request: { type: Object, default: null },
@@ -12,6 +13,7 @@ const props = defineProps({
         type: Object,
         default: () => ({ past: [], this: [], upcoming: [], currencies: [] }),
     },
+    traded_symbols: { type: Array, default: () => [] },
 });
 
 const impactClass = (impact) => ({
@@ -23,6 +25,38 @@ const impactClass = (impact) => ({
 
 const newsTab = ref('this');
 const showAllImpacts = ref(false);
+const selectedNews = ref(null);
+
+// Build a deep link to ForexFactory's calendar for the given day,
+// pre-filtered by the event title so the trader lands close to the row.
+const forexFactoryUrl = (item) => {
+    if (!item) return 'https://www.forexfactory.com/calendar';
+    const iso = item.event_at_iso || item.event_at;
+    let d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d.getTime())) d = new Date();
+    const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const m = months[d.getMonth()];
+    const q = encodeURIComponent(item.title || '');
+    return `https://www.forexfactory.com/calendar?day=${m}${d.getDate()}.${d.getFullYear()}&search=${q}`;
+};
+
+const openNewsDetail = (item) => {
+    if (item.source === 'mt5') {
+        // MT5 news — show in-app popup only (no public detail page exists)
+        selectedNews.value = item;
+    } else {
+        // ForexFactory news — redirect straight to the calendar day for this event
+        window.open(forexFactoryUrl(item), '_blank', 'noopener');
+    }
+};
+
+const closeNewsDetail = () => { selectedNews.value = null; };
+
+// Source badge colors
+const sourceLabel = (src) => ({
+    forexfactory: { text: 'ForexFactory', cls: 'bg-blue-100 text-blue-800 border border-blue-300' },
+    mt5:          { text: 'MetaTrader',   cls: 'bg-orange-100 text-orange-800 border border-orange-300' },
+}[src] || { text: src || 'unknown', cls: 'bg-gray-100 text-gray-800 border border-gray-300' });
 
 // Filter news by impact. By default only HIGH; toggle reveals MEDIUM/LOW.
 const filteredNews = computed(() => {
@@ -105,13 +139,18 @@ const TIMEFRAMES = ['H1', 'H4', 'Daily', 'Weekly'];
 const selectedTimeframe = ref('H4');
 
 const currentCurrency = computed(() => {
+    // Use the server-supplied currency if provided (correct for SGD/CAD/CHF/JPY pairs)
+    if (props.currency && props.currency.length === 3) {
+        return props.currency.toUpperCase();
+    }
     const sym = String(props.symbol || 'AUDUSD').toUpperCase();
     return sym.substring(0, 3);
 });
 
 const selectCurrency = (cur) => {
     const pair = PAIR_MAP[cur] || `${cur}USD`;
-    router.get(route('analysis.index', { symbol: pair }), {}, { preserveState: false });
+    // Pass `currency` explicitly so the page knows SGD ≠ USD even when symbol = USDSGD
+    router.get(route('analysis.index', { symbol: pair, currency: cur }), {}, { preserveState: false });
 };
 
 const generating = ref(false);
@@ -238,7 +277,7 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                 <!-- Currency selector -->
                 <section class="overflow-hidden bg-white shadow-sm sm:rounded-lg">
                     <div class="border-b border-gray-200 px-6 py-4">
-                        <h3 class="text-sm font-medium uppercase tracking-wider text-gray-500">Currency</h3>
+                        <h3 class="text-base font-bold uppercase tracking-wider text-black">Currency</h3>
                     </div>
                     <div class="flex flex-wrap gap-2 p-4">
                         <button
@@ -247,14 +286,37 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                             type="button"
                             @click="selectCurrency(cur)"
                             :class="[
-                                'rounded-md border px-4 py-2 text-sm font-medium transition',
+                                'rounded-md border-2 px-4 py-2 text-sm font-bold transition',
                                 currentCurrency === cur
                                     ? 'border-indigo-600 bg-indigo-600 text-white'
-                                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                    : 'border-gray-300 bg-white text-black hover:bg-gray-100'
                             ]"
                         >
                             {{ cur }}
                         </button>
+                    </div>
+
+                    <div v-if="traded_symbols.length" class="border-t border-gray-200 px-4 py-3">
+                        <p class="mb-2 text-base font-bold uppercase tracking-wider text-black">
+                            Currently Trading
+                            <span class="text-sm font-normal text-black">— pulled from open + pending orders</span>
+                        </p>
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                v-for="sym in traded_symbols"
+                                :key="sym"
+                                type="button"
+                                @click="router.get(route('analysis.index', { symbol: sym }), {}, { preserveState: false })"
+                                :class="[
+                                    'rounded-md border-2 px-3 py-1.5 text-sm font-bold font-mono',
+                                    symbol === sym
+                                        ? 'border-green-600 bg-green-600 text-white'
+                                        : 'border-green-200 bg-green-50 text-black hover:bg-green-100'
+                                ]"
+                            >
+                                {{ sym }}
+                            </button>
+                        </div>
                     </div>
                 </section>
 
@@ -373,27 +435,15 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                         <div v-if="analysis.support_resistance" class="rounded-lg border-2 border-gray-300 bg-white p-5">
                             <p class="text-base font-bold uppercase tracking-wider text-black">Support / Resistance · {{ analysis.symbol }}</p>
 
-                            <!-- Current market price strip -->
-                            <div v-if="priceSnapshot" class="mt-3 flex flex-wrap items-end gap-6 rounded-md bg-gray-50 px-4 py-3">
+                            <!-- Current market price strip — Ask only -->
+                            <div v-if="priceSnapshot && priceSnapshot.ask" class="mt-3 flex flex-wrap items-end gap-6 rounded-md bg-gray-50 px-4 py-3">
                                 <div>
-                                    <p class="text-sm font-semibold text-black">Bid</p>
-                                    <p class="font-mono text-2xl font-bold text-black">
-                                        {{ Number(priceSnapshot.bid).toFixed(priceSnapshot.digits || 5) }}
-                                    </p>
-                                </div>
-                                <div v-if="priceSnapshot.ask">
-                                    <p class="text-sm font-semibold text-black">Ask</p>
-                                    <p class="font-mono text-2xl font-bold text-black">
+                                    <p class="text-sm font-semibold text-black">Ask Price</p>
+                                    <p class="font-mono text-3xl font-bold text-black">
                                         {{ Number(priceSnapshot.ask).toFixed(priceSnapshot.digits || 5) }}
                                     </p>
                                 </div>
-                                <div v-if="priceSnapshot.mid">
-                                    <p class="text-sm font-semibold text-black">Mid</p>
-                                    <p class="font-mono text-2xl font-bold text-black">
-                                        {{ Number(priceSnapshot.mid).toFixed(priceSnapshot.digits || 5) }}
-                                    </p>
-                                </div>
-                                <div v-if="priceSnapshot.captured_at" class="ml-auto text-xs text-black">
+                                <div v-if="priceSnapshot.captured_at" class="ml-auto text-sm text-black">
                                     Captured: {{ new Date(priceSnapshot.captured_at).toLocaleString() }}
                                 </div>
                             </div>
@@ -532,6 +582,7 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                     <th class="px-4 py-2">Date / Time</th>
                                     <th class="px-4 py-2">Currency</th>
                                     <th class="px-4 py-2">Impact</th>
+                                    <th class="px-4 py-2">Source</th>
                                     <th class="px-4 py-2">Event</th>
                                     <th class="px-4 py-2 text-right">Forecast</th>
                                     <th class="px-4 py-2 text-right">Previous</th>
@@ -539,7 +590,12 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100 bg-white">
-                                <tr v-for="n in filteredNews[newsTab]" :key="n.id" class="hover:bg-gray-50">
+                                <tr v-for="n in filteredNews[newsTab]" :key="n.id"
+                                    class="cursor-pointer hover:bg-yellow-50"
+                                    :title="n.source === 'mt5'
+                                        ? `Click to view MetaTrader details for '${n.title}'`
+                                        : `Click to open '${n.title}' on ForexFactory (new tab)`"
+                                    @click="openNewsDetail(n)">
                                     <td class="whitespace-nowrap px-4 py-2 font-mono text-black">{{ n.event_at }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 font-mono font-bold text-black">{{ n.currency }}</td>
                                     <td class="whitespace-nowrap px-4 py-2">
@@ -547,7 +603,13 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                             {{ n.impact }}
                                         </span>
                                     </td>
-                                    <td class="px-4 py-2 text-black">{{ n.title }}</td>
+                                    <td class="whitespace-nowrap px-4 py-2">
+                                        <span :class="['rounded-full px-2 py-0.5 text-xs font-bold', sourceLabel(n.source).cls]">
+                                            {{ sourceLabel(n.source).text }}
+                                            <span v-if="n.source === 'forexfactory'" class="ml-0.5">↗</span>
+                                        </span>
+                                    </td>
+                                    <td class="px-4 py-2 text-black underline decoration-dotted">{{ n.title }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-black">{{ n.forecast || '—' }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-black">{{ n.previous || '—' }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right font-mono"
@@ -570,6 +632,80 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                         </p>
                     </div>
                 </section>
+
+                <!-- ===== MT5 News detail popup (styled like MetaTrader's terminal calendar) ===== -->
+                <div v-if="selectedNews"
+                     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                     @click.self="closeNewsDetail">
+                    <div class="w-full max-w-2xl rounded-lg bg-[#1e1e1e] text-gray-100 shadow-2xl">
+                        <!-- Header — MT5-style dark bar -->
+                        <div class="flex items-start justify-between gap-4 border-b border-gray-700 bg-[#252526] px-5 py-3 rounded-t-lg">
+                            <div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span :class="['rounded-full px-2 py-0.5 text-xs font-bold', impactClass(selectedNews.impact)]">
+                                        {{ selectedNews.impact }}
+                                    </span>
+                                    <span class="rounded bg-orange-600 px-2 py-0.5 text-xs font-bold text-white">
+                                        MetaTrader Calendar
+                                    </span>
+                                    <span class="font-mono text-base font-bold text-yellow-300">{{ selectedNews.currency }}</span>
+                                    <span class="font-mono text-sm text-gray-300">{{ selectedNews.event_at }} GMT+8</span>
+                                </div>
+                                <h3 class="mt-2 text-xl font-bold text-white">{{ selectedNews.title }}</h3>
+                            </div>
+                            <button @click="closeNewsDetail" class="text-3xl text-gray-400 hover:text-red-400">×</button>
+                        </div>
+
+                        <div class="space-y-4 p-5">
+                            <!-- Values grid -->
+                            <dl class="grid grid-cols-3 gap-3">
+                                <div class="rounded-md bg-[#2d2d30] p-3">
+                                    <dt class="text-xs font-bold uppercase tracking-wider text-gray-400">Forecast</dt>
+                                    <dd class="mt-1 font-mono text-lg font-bold text-blue-300">{{ selectedNews.forecast || '—' }}</dd>
+                                </div>
+                                <div class="rounded-md bg-[#2d2d30] p-3">
+                                    <dt class="text-xs font-bold uppercase tracking-wider text-gray-400">Previous</dt>
+                                    <dd class="mt-1 font-mono text-lg font-bold text-gray-300">{{ selectedNews.previous || '—' }}</dd>
+                                </div>
+                                <div class="rounded-md bg-[#2d2d30] p-3">
+                                    <dt class="text-xs font-bold uppercase tracking-wider text-gray-400">Actual</dt>
+                                    <dd class="mt-1 font-mono text-lg font-bold"
+                                        :class="selectedNews.actual ? 'text-yellow-300' : 'text-gray-500'">
+                                        {{ selectedNews.actual || '—' }}
+                                    </dd>
+                                </div>
+                            </dl>
+
+                            <!-- Additional MT5 calendar context (when present) -->
+                            <div v-if="selectedNews.measures" class="rounded-md bg-[#2d2d30] p-3">
+                                <p class="text-xs font-bold uppercase tracking-wider text-gray-400">What it measures</p>
+                                <p class="mt-1 text-sm leading-relaxed text-gray-200" v-html="selectedNews.measures"></p>
+                            </div>
+                            <div v-if="selectedNews.usual_effect" class="rounded-md bg-[#2d2d30] p-3">
+                                <p class="text-xs font-bold uppercase tracking-wider text-gray-400">Usual market effect</p>
+                                <p class="mt-1 text-sm leading-relaxed text-gray-200" v-html="selectedNews.usual_effect"></p>
+                            </div>
+                            <div v-if="selectedNews.traders_care" class="rounded-md bg-[#2d2d30] p-3">
+                                <p class="text-xs font-bold uppercase tracking-wider text-gray-400">Why traders care</p>
+                                <p class="mt-1 text-sm leading-relaxed text-gray-200" v-html="selectedNews.traders_care"></p>
+                            </div>
+                            <div v-if="selectedNews.notes" class="rounded-md bg-[#2d2d30] p-3">
+                                <p class="text-xs font-bold uppercase tracking-wider text-gray-400">Notes</p>
+                                <p class="mt-1 text-sm leading-relaxed text-gray-200" v-html="selectedNews.notes"></p>
+                            </div>
+
+                            <p v-if="!selectedNews.measures && !selectedNews.usual_effect && !selectedNews.traders_care && !selectedNews.notes"
+                               class="rounded-md bg-[#2d2d30] p-3 text-center text-sm italic text-gray-400">
+                                No additional context provided by the MT5 calendar feed for this event.
+                            </p>
+
+                            <p class="text-right text-xs text-gray-500">
+                                Source: MetaTrader 5 Economic Calendar
+                                <span v-if="selectedNews.mt5_event_id">· event #{{ selectedNews.mt5_event_id }}</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
 
             </div>
         </div>
