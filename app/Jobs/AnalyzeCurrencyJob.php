@@ -159,8 +159,11 @@ class AnalyzeCurrencyJob implements ShouldQueue
         $start = $anchor->startOfWeek()->utc();
         $end = $anchor->endOfWeek()->utc();
 
+        // Only HIGH impact events are fed to the AI — keeps the prompt focused
+        // on news that actually moves price, and cuts OpenRouter token cost.
         return ForexNews::forCurrencies($currencies)
             ->between($start, $end)
+            ->where('impact', 'HIGH')
             ->orderBy('event_at')
             ->get();
     }

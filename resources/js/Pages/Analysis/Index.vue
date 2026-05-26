@@ -22,6 +22,33 @@ const impactClass = (impact) => ({
 }[impact] || 'bg-gray-100 text-gray-600');
 
 const newsTab = ref('this');
+const showAllImpacts = ref(false);
+
+// Filter news by impact. By default only HIGH; toggle reveals MEDIUM/LOW.
+const filteredNews = computed(() => {
+    const out = {
+        past: [], this: [], upcoming: [],
+        currencies: props.news?.currencies || [],
+    };
+    for (const k of ['past', 'this', 'upcoming']) {
+        const items = props.news?.[k] || [];
+        out[k] = showAllImpacts.value
+            ? items
+            : items.filter((n) => (n.impact || '').toUpperCase() === 'HIGH');
+    }
+    return out;
+});
+
+const hiddenImpactCount = computed(() => {
+    if (showAllImpacts.value) return 0;
+    let count = 0;
+    for (const k of ['past', 'this', 'upcoming']) {
+        for (const n of (props.news?.[k] || [])) {
+            if ((n.impact || '').toUpperCase() !== 'HIGH') count++;
+        }
+    }
+    return count;
+});
 
 // === Bias gauge helpers =====================================================
 const biasLabel = (score) => {
@@ -228,25 +255,6 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                         >
                             {{ cur }}
                         </button>
-                    </div>
-                    <div class="border-t border-gray-200 px-4 py-3">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="mr-2 text-xs font-medium uppercase tracking-wider text-gray-500">Chart Timeframe</span>
-                            <button
-                                v-for="tf in TIMEFRAMES"
-                                :key="tf"
-                                type="button"
-                                @click="selectedTimeframe = tf"
-                                :class="[
-                                    'rounded-md border px-3 py-1 text-xs font-medium',
-                                    selectedTimeframe === tf
-                                        ? 'border-gray-800 bg-gray-800 text-white'
-                                        : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                                ]"
-                            >
-                                {{ tf }}
-                            </button>
-                        </div>
                     </div>
                 </section>
 
@@ -469,16 +477,28 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                     </div>
                 </section>
 
-                <!-- News (past / this week / upcoming) -->
+                <!-- News (past / this week / upcoming) — HIGH only by default -->
                 <section class="overflow-hidden bg-white shadow-sm sm:rounded-lg">
                     <div class="border-b border-gray-200 px-6 py-4">
-                        <div class="flex items-center justify-between">
-                            <h3 class="text-lg font-medium text-gray-900">
-                                Economic News
-                                <span class="ml-2 text-sm font-normal text-gray-500">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <h3 class="text-lg font-bold text-black">
+                                Economic News · HIGH impact
+                                <span class="ml-2 text-base font-normal text-black">
                                     ({{ (news.currencies || []).join(' + ') || currentCurrency }})
                                 </span>
                             </h3>
+                            <button
+                                type="button"
+                                @click="showAllImpacts = !showAllImpacts"
+                                class="rounded-md border-2 border-black bg-white px-3 py-1.5 text-sm font-semibold text-black hover:bg-gray-100"
+                            >
+                                <template v-if="showAllImpacts">
+                                    ▲ Hide medium / low impact
+                                </template>
+                                <template v-else>
+                                    ▼ Show all impacts ({{ hiddenImpactCount }} hidden)
+                                </template>
+                            </button>
                         </div>
                     </div>
 
@@ -492,22 +512,22 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                             :key="tab.key"
                             @click="newsTab = tab.key"
                             :class="[
-                                'rounded-t-md px-4 py-2 text-xs font-medium',
+                                'rounded-t-md px-4 py-2 text-sm font-semibold',
                                 newsTab === tab.key
-                                    ? 'border border-b-0 border-gray-200 bg-white text-gray-900'
-                                    : 'text-gray-500 hover:text-gray-700'
+                                    ? 'border border-b-0 border-gray-300 bg-white text-black'
+                                    : 'text-black hover:text-black hover:bg-gray-100'
                             ]"
                         >
                             {{ tab.label }}
-                            <span class="ml-1 rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-700">
-                                {{ (news[tab.key] || []).length }}
+                            <span class="ml-1 rounded-full bg-black px-1.5 py-0.5 text-[10px] text-white">
+                                {{ (filteredNews[tab.key] || []).length }}
                             </span>
                         </button>
                     </nav>
 
                     <div class="overflow-x-auto">
-                        <table v-if="(news[newsTab] || []).length" class="min-w-full divide-y divide-gray-200 text-xs">
-                            <thead class="bg-gray-50 text-left text-[10px] uppercase tracking-wider text-gray-500">
+                        <table v-if="(filteredNews[newsTab] || []).length" class="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead class="bg-gray-50 text-left text-xs font-bold uppercase tracking-wider text-black">
                                 <tr>
                                     <th class="px-4 py-2">Date / Time</th>
                                     <th class="px-4 py-2">Currency</th>
@@ -519,28 +539,34 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100 bg-white">
-                                <tr v-for="n in news[newsTab]" :key="n.id" class="hover:bg-gray-50">
-                                    <td class="whitespace-nowrap px-4 py-2 font-mono text-gray-700">{{ n.event_at }}</td>
-                                    <td class="whitespace-nowrap px-4 py-2 font-mono text-gray-900">{{ n.currency }}</td>
+                                <tr v-for="n in filteredNews[newsTab]" :key="n.id" class="hover:bg-gray-50">
+                                    <td class="whitespace-nowrap px-4 py-2 font-mono text-black">{{ n.event_at }}</td>
+                                    <td class="whitespace-nowrap px-4 py-2 font-mono font-bold text-black">{{ n.currency }}</td>
                                     <td class="whitespace-nowrap px-4 py-2">
-                                        <span :class="['rounded-full px-2 py-0.5 text-[10px] font-medium', impactClass(n.impact)]">
+                                        <span :class="['rounded-full px-2 py-0.5 text-xs font-bold', impactClass(n.impact)]">
                                             {{ n.impact }}
                                         </span>
                                     </td>
-                                    <td class="px-4 py-2 text-gray-700">{{ n.title }}</td>
-                                    <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">{{ n.forecast || '—' }}</td>
-                                    <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-gray-600">{{ n.previous || '—' }}</td>
+                                    <td class="px-4 py-2 text-black">{{ n.title }}</td>
+                                    <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-black">{{ n.forecast || '—' }}</td>
+                                    <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-black">{{ n.previous || '—' }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right font-mono"
-                                        :class="n.actual ? 'text-gray-900 font-semibold' : 'text-gray-400'">
+                                        :class="n.actual ? 'text-black font-bold' : 'text-black'">
                                         {{ n.actual || '—' }}
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
-                        <p v-else class="px-6 py-6 text-center text-xs text-gray-500">
-                            No {{ newsTab === 'past' ? 'past' : newsTab === 'this' ? 'this week' : 'upcoming' }} news for
-                            <span class="font-mono">{{ (news.currencies || []).join(' / ') || currentCurrency }}</span>.
-                            Run <code class="rounded bg-gray-100 px-1 font-mono">php artisan news:scrape</code> to refresh.
+                        <p v-else class="px-6 py-6 text-center text-sm text-black">
+                            <template v-if="!showAllImpacts && (news[newsTab] || []).length > 0">
+                                No HIGH-impact news in {{ newsTab === 'past' ? 'past week' : newsTab === 'this' ? 'this week' : 'upcoming' }} —
+                                <button type="button" @click="showAllImpacts = true" class="font-bold underline">show all {{ (news[newsTab] || []).length }} events</button>.
+                            </template>
+                            <template v-else>
+                                No {{ newsTab === 'past' ? 'past' : newsTab === 'this' ? 'this week' : 'upcoming' }} news for
+                                <span class="font-mono">{{ (news.currencies || []).join(' / ') || currentCurrency }}</span>.
+                                Run <code class="rounded bg-gray-100 px-1 font-mono">php artisan news:scrape</code> to refresh.
+                            </template>
                         </p>
                     </div>
                 </section>

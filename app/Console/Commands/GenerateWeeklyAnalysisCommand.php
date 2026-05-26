@@ -11,13 +11,14 @@ class GenerateWeeklyAnalysisCommand extends Command
 {
     protected $signature = 'analysis:generate-weekly
                             {--symbols= : Comma-separated list of symbols to queue (defaults to the 9 majors)}
-                            {--user= : User ID to attribute the analyses to}';
+                            {--user= : User ID to attribute the analyses to}
+                            {--timeout=420 : Seconds to wait for each symbol before giving up (default 7 min)}
+                            {--poll=5 : Polling interval in seconds when waiting}';
 
-    protected $description = 'Queue a fresh AI analysis for each major FX pair so users see results on entry';
+    protected $description = 'Sequentially generate AI analysis for each major FX pair, waiting for each one to complete before starting the next (no queue worker required).';
 
     /**
-     * Default set of pairs (one per base currency from the analysis page).
-     * Override via --symbols=EURUSD,GBPUSD,...
+     * Default set of pairs (one per base currency on the analysis page).
      */
     private const DEFAULT_SYMBOLS = [
         'AUDUSD', 'USDCAD', 'EURUSD', 'GBPUSD',
@@ -26,41 +27,53 @@ class GenerateWeeklyAnalysisCommand extends Command
 
     public function handle(): int
     {
+        // CLI script — let it run as long as it needs to. With sequential
+        // mode, 8 symbols at ~60s each = ~8 minutes worst case.
+        @set_time_limit(0);
+
         $symbols = $this->option('symbols')
-            ? array_map('trim', explode(',', $this->option('symbols')))
+            ? array_filter(array_map('trim', explode(',', $this->option('symbols'))))
             : self::DEFAULT_SYMBOLS;
 
-        $userId = $this->option('user') ? (int) $this->option('user') : null;
+        $userId  = $this->option('user') ? (int) $this->option('user') : null;
+        $timeout = max(60, (int) $this->option('timeout'));
+        $poll    = max(2, (int) $this->option('poll'));
+
         $now = CarbonImmutable::now('Asia/Singapore');
         $weekStart = $now->startOfWeek()->toDateString();
-        $weekEnd = $now->endOfWeek()->toDateString();
+        $weekEnd   = $now->endOfWeek()->toDateString();
 
-        $queued = 0;
-        $skipped = 0;
+        $this->info("Weekly analysis — sequential mode");
+        $this->line("  Symbols: " . implode(', ', $symbols));
+        $this->line("  Week:    {$weekStart} → {$weekEnd}");
+        $this->line("  Timeout per symbol: {$timeout}s   Poll: {$poll}s");
+        $this->newLine();
 
-        foreach ($symbols as $symbol) {
-            $symbol = strtoupper(trim($symbol));
-            if ($symbol === '') {
-                continue;
-            }
+        $stats = ['completed' => 0, 'failed' => 0, 'skipped' => 0, 'timeout' => 0];
+        $overallStart = microtime(true);
 
-            // Skip if a completed analysis already exists for this week's start
+        foreach ($symbols as $i => $symbol) {
+            $symbol = strtoupper($symbol);
+            $prefix = sprintf('[%d/%d %s]', $i + 1, count($symbols), $symbol);
+
+            // Skip if a completed analysis already exists for this week
             $existing = CurrencyAnalysis::where('symbol', $symbol)
                 ->where('week_start', $weekStart)
                 ->where('status', 'completed')
-                ->exists();
+                ->first();
             if ($existing) {
-                $this->line("  • {$symbol}  ↩ already completed this week");
-                $skipped++;
+                $this->line("{$prefix} ↩ already completed this week (#{$existing->id})");
+                $stats['skipped']++;
                 continue;
             }
 
+            // Create analysis + chart request (status=pending)
             $analysis = CurrencyAnalysis::create([
-                'symbol' => $symbol,
+                'symbol'     => $symbol,
                 'week_start' => $weekStart,
-                'week_end' => $weekEnd,
-                'status' => 'pending',
-                'user_id' => $userId,
+                'week_end'   => $weekEnd,
+                'status'     => 'pending',
+                'user_id'    => $userId,
             ]);
 
             ChartRequest::create([
@@ -69,14 +82,83 @@ class GenerateWeeklyAnalysisCommand extends Command
                 'status' => 'pending',
             ]);
 
-            $this->info("  ✓ {$symbol}  queued (analysis #{$analysis->id})");
-            $queued++;
+            $this->info("{$prefix} → queued (analysis #{$analysis->id})");
+            $this->output->write("       waiting for EA → ");
+
+            // Poll until analysis is completed or failed (or we time out)
+            $startedAt = microtime(true);
+            $finalStatus = null;
+
+            while (true) {
+                sleep($poll);
+
+                $fresh = $analysis->fresh();
+                if (! $fresh) {
+                    $finalStatus = 'gone';
+                    break;
+                }
+
+                if ($fresh->status === 'completed') {
+                    $finalStatus = 'completed';
+                    break;
+                }
+
+                if ($fresh->status === 'failed') {
+                    $finalStatus = 'failed';
+                    break;
+                }
+
+                if ((microtime(true) - $startedAt) > $timeout) {
+                    $finalStatus = 'timeout';
+                    break;
+                }
+
+                $this->output->write('.');
+            }
+
+            $elapsed = (int) round(microtime(true) - $startedAt);
+
+            switch ($finalStatus) {
+                case 'completed':
+                    $bias = $analysis->fresh()->bias_score;
+                    $outlook = $analysis->fresh()->outlook;
+                    $this->info(" ✓ done in {$elapsed}s (bias {$bias}/100, outlook {$outlook})");
+                    $stats['completed']++;
+                    break;
+
+                case 'failed':
+                    $err = $analysis->fresh()->error_message ?? 'unknown';
+                    $this->warn(" ✗ failed in {$elapsed}s — {$err}");
+                    $stats['failed']++;
+                    break;
+
+                case 'timeout':
+                    $this->warn(" ⏱ timeout after {$elapsed}s — EA may be offline. Marking failed.");
+                    $analysis->update([
+                        'status' => 'failed',
+                        'error_message' => "Weekly run timed out after {$timeout}s waiting for EA / OpenRouter",
+                    ]);
+                    $stats['timeout']++;
+                    break;
+
+                default:
+                    $this->error(" ? analysis row disappeared");
+                    $stats['failed']++;
+            }
         }
 
+        $totalElapsed = (int) round(microtime(true) - $overallStart);
         $this->newLine();
-        $this->info("Done. Queued: {$queued}, Skipped: {$skipped}");
-        $this->line('  → The ChartExporter EA will pick these up within 10s each, capture H4/D1/W1 + upload, then the analysis runs sync.');
+        $this->info(sprintf(
+            "Done in %dm %ds — completed: %d, failed: %d, timeout: %d, skipped: %d",
+            intdiv($totalElapsed, 60),
+            $totalElapsed % 60,
+            $stats['completed'],
+            $stats['failed'],
+            $stats['timeout'],
+            $stats['skipped'],
+        ));
 
-        return Command::SUCCESS;
+        return $stats['failed'] + $stats['timeout'] > 0 ? Command::FAILURE : Command::SUCCESS;
     }
 }
