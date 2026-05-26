@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\AnalyzeCurrencyJob;
 use App\Models\AlertLog;
 use App\Models\Mt5Account;
 use App\Models\OrderHistory;
@@ -10,6 +11,7 @@ use App\Models\OrderPending;
 use App\Models\AccountSnapshot;
 use App\Models\User;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Bus;
 use Tests\TestCase;
 
 /**
@@ -73,6 +75,10 @@ class WalkthroughTest extends TestCase
     {
         $admin = User::where('email', 'admin@email.com')->firstOrFail();
 
+        // Fake the bus so the AnalyzeCurrencyJob (which would hit OpenRouter +
+        // Yahoo Finance for real) does NOT execute during the test.
+        Bus::fake();
+
         $this->actingAs($admin)
             ->post('/analysis/generate', ['symbol' => 'AUDUSD'])
             ->assertRedirect()
@@ -84,10 +90,12 @@ class WalkthroughTest extends TestCase
             ->first();
         $this->assertNotNull($analysis);
 
-        $chartRequest = \App\Models\ChartRequest::where('currency_analysis_id', $analysis->id)->first();
-        $this->assertNotNull($chartRequest);
-        $this->assertSame('AUDUSD', $chartRequest->symbol);
-        $this->assertSame('pending', $chartRequest->status);
+        // New flow: the controller dispatches AnalyzeCurrencyJob directly
+        // (after-response, text-only). No ChartRequest is created anymore.
+        Bus::assertDispatchedAfterResponse(
+            AnalyzeCurrencyJob::class,
+            fn (AnalyzeCurrencyJob $job) => $job->analysisId === $analysis->id,
+        );
     }
 
     public function test_analysis_generate_validates_symbol(): void

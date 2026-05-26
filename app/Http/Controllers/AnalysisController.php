@@ -13,6 +13,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Bus;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 
@@ -146,25 +147,24 @@ class AnalysisController extends Controller
         ]);
 
         $symbol = strtoupper($data['symbol']);
-        $now = CarbonImmutable::now('Asia/Singapore');
+        $now    = CarbonImmutable::now('Asia/Singapore');
 
         $analysis = CurrencyAnalysis::create([
-            'symbol' => $symbol,
+            'symbol'     => $symbol,
             'week_start' => $now->startOfWeek()->toDateString(),
-            'week_end' => $now->endOfWeek()->toDateString(),
-            'status' => 'pending',
-            'user_id' => $request->user()?->id,
+            'week_end'   => $now->endOfWeek()->toDateString(),
+            'status'     => 'pending',
+            'user_id'    => $request->user()?->id,
         ]);
 
-        ChartRequest::create([
-            'currency_analysis_id' => $analysis->id,
-            'symbol' => $symbol,
-            'status' => 'pending',
-        ]);
+        // Run analysis in the same PHP worker, after the HTTP response is sent
+        // back to the browser. No queue worker required; the frontend polls
+        // /analysis/{id}/status every 5s and reloads when it's done.
+        Bus::dispatchAfterResponse(new AnalyzeCurrencyJob($analysis->id));
 
         return redirect()
             ->route('analysis.index', ['symbol' => $symbol])
-            ->with('success', "Analysis queued for {$symbol}. ")
+            ->with('success', "Generating analysis for {$symbol}. Please wait...")
             ->with('analysis_id', $analysis->id);
     }
 

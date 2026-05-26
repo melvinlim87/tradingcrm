@@ -337,13 +337,7 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                 Analysis in progress (status: {{ analysis?.status }})
                             </p>
                             <p class="mt-0.5 text-xs">
-                                <template v-if="chart_request">
-                                    Chart export: <span class="font-mono">{{ chart_request.status }}</span> ·
-                                    Waiting for ChartExporter EA to upload H4 / D1 / W1 screenshots.
-                                </template>
-                                <template v-else>
-                                    Queued. Polling every 5s for updates.
-                                </template>
+                                Please wait — generating analysis. This usually takes about a minute.
                             </p>
                         </div>
                     </div>

@@ -45,6 +45,14 @@ return [
         'temperature' => env('OPENROUTER_TEMPERATURE', 0.3),
     ],
 
+    // Aisita chart-image API — returns 3 base64 PNG charts (M15 / H1 / H4)
+    // for a given symbol. Used as the primary source of charts for the AI
+    // analysis pipeline (replaces the EA-driven ChartExporter path).
+    'aisita' => [
+        'chart_url' => env('AISITA_CHART_URL', 'https://dev-backend.aisita.ai/api/gold-chart'),
+        'token'     => env('AISITA_CHART_TOKEN'),
+    ],
+
     'telegram' => [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
         'default_chat_id' => env('TELEGRAM_DEFAULT_CHAT_ID'),

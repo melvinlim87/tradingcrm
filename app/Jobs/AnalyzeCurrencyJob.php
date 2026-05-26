@@ -5,6 +5,8 @@ namespace App\Jobs;
 use App\Models\ChartRequest;
 use App\Models\CurrencyAnalysis;
 use App\Models\ForexNews;
+use App\Services\AisitaChartService;
+use App\Services\MarketDataService;
 use App\Services\OpenRouterService;
 use App\Services\PromptRenderer;
 use Carbon\CarbonImmutable;
@@ -31,80 +33,93 @@ class AnalyzeCurrencyJob implements ShouldQueue
     public function handle(
         OpenRouterService $openRouter,
         PromptRenderer $renderer,
+        MarketDataService $marketData,
+        AisitaChartService $aisitaCharts,
     ): void {
         $analysis = CurrencyAnalysis::findOrFail($this->analysisId);
 
+        // Existing chart request (EA-driven path, if any)
         $chartRequest = ChartRequest::where('currency_analysis_id', $analysis->id)
             ->latest('id')
             ->first();
 
-        if (! $chartRequest) {
-            $analysis->update([
-                'status' => 'failed',
-                'error_message' => 'No chart request linked to this analysis',
-            ]);
-            return;
-        }
-
-        if ($chartRequest->status === 'failed') {
-            $analysis->update([
-                'status' => 'failed',
-                'error_message' => 'Chart export failed: ' . ($chartRequest->error_message ?? 'unknown'),
-            ]);
-            return;
-        }
-
-        if (! $chartRequest->hasAllTimeframes()) {
-            // We're running synchronously from EaChartController::upload() right
-            // after the 3rd chart arrives, so this should never happen. Mark
-            // failed instead of relying on a queue worker to re-release.
-            $analysis->update([
-                'status' => 'failed',
-                'error_message' => 'Charts incomplete when analysis ran',
-            ]);
-            $chartRequest->update(['status' => 'failed', 'error_message' => 'incomplete_at_dispatch']);
-            return;
-        }
-
         $analysis->update(['status' => 'processing', 'error_message' => null]);
 
         try {
-            // Public URLs (for storing in DB / displaying in UI later)
-            $chartUrls = $chartRequest->imageUrlMap();
-
-            // Base64-encoded data URIs (for sending to OpenRouter — its model
-            // server can't fetch localhost / private URLs, so we inline the
-            // image bytes directly in the API request).
-            $chartDataUris = $this->encodeChartsAsDataUris($chartRequest);
-
-            // Current bid/ask snapshot from the EA (sent with each chart upload)
-            $priceSnapshot = $this->priceSnapshot($chartRequest);
-
             $currencies = $this->extractCurrencies($analysis->symbol);
-            $now = CarbonImmutable::now('Asia/Singapore');
+            $now        = CarbonImmutable::now('Asia/Singapore');
 
-            // PAST: last 1 month of HIGH-impact events (was 1 week)
+            // PAST: last 1 month of HIGH-impact events
             $newsLast = $this->fetchNewsBetween(
                 $currencies,
                 $now->subMonth(),
                 $now->subDay()->endOfDay(),
             );
-            // THIS WEEK: from start of week to end of week
+            // THIS WEEK
             $newsThis = $this->fetchNewsForWeek($currencies, $now);
             // NEXT WEEK
             $newsNext = $this->fetchNewsForWeek($currencies, $now->addWeek());
 
+            // ── Pick chart source: Aisita (preferred) → EA → text-only ──
+            $mode          = 'text_only';
+            $chartUrls     = [];
+            $promptImages  = [];
+            $marketBlock   = '';
+            $priceSnapshot = ['bid' => null, 'ask' => null, 'digits' => null, 'captured_at' => null, 'display' => 'unavailable'];
+
+            if ($aisitaCharts->isConfigured()) {
+                try {
+                    $fetched = $aisitaCharts->fetch($analysis->symbol);
+                    $chartUrls    = $aisitaCharts->persistForAnalysis($analysis->id, $fetched['timeframes']);
+                    $promptImages = $fetched['data_uris'];
+                    $marketBlock  = "(Chart screenshots are attached below — M15 / H1 / H4 from Aisita. Use them as the primary source for structure / S&R / momentum. Recall that this is a SHORT-term view; the bias should reflect the next 1-5 trading days.)";
+                    $mode         = 'aisita_vision';
+
+                    // Stash a basic price snapshot from MarketData so the prompt
+                    // header still shows a current price reference.
+                    try {
+                        $md = $marketData->snapshot($analysis->symbol);
+                        $priceSnapshot = $this->priceSnapshotFromMarketData($md);
+                    } catch (Throwable $e) {
+                        Log::info('AnalyzeCurrencyJob: market-data snapshot failed (non-fatal)', [
+                            'symbol' => $analysis->symbol,
+                            'error'  => $e->getMessage(),
+                        ]);
+                    }
+                } catch (Throwable $e) {
+                    Log::warning('AnalyzeCurrencyJob: Aisita fetch failed, falling back', [
+                        'symbol' => $analysis->symbol,
+                        'error'  => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            if ($mode === 'text_only' && $chartRequest && $chartRequest->hasAllTimeframes()) {
+                $chartUrls     = $chartRequest->imageUrlMap();
+                $promptImages  = $this->encodeChartsAsDataUris($chartRequest);
+                $priceSnapshot = $this->priceSnapshot($chartRequest);
+                $marketBlock   = "(Chart screenshots are attached below — H4 / D1 / W1 from the MT5 EA. Use them as the primary source for structure / S&R / momentum.)";
+                $mode          = 'ea_vision';
+            }
+
+            if ($mode === 'text_only') {
+                $snapshot      = $marketData->snapshot($analysis->symbol);
+                $marketBlock   = $marketData->renderForPrompt($snapshot);
+                $priceSnapshot = $this->priceSnapshotFromMarketData($snapshot);
+            }
+
             $prompt = $renderer->render([
-                'symbol' => $analysis->symbol,
-                'current_date' => $now->toDateString(),
-                'current_price' => $priceSnapshot['display'],
-                'news_last_week' => $this->formatNews($newsLast),
-                'news_this_week' => $this->formatNews($newsThis),
-                'news_next_week' => $this->formatNews($newsNext),
-                'response_schema' => $this->responseSchema(),
+                'symbol'           => $analysis->symbol,
+                'current_date'     => $now->toDateString(),
+                'current_price'    => $priceSnapshot['display'],
+                'market_data'      => $marketBlock,
+                'news_last_week'   => $this->formatNews($newsLast),
+                'news_this_week'   => $this->formatNews($newsThis),
+                'news_next_week'   => $this->formatNews($newsNext),
+                'response_schema'  => $this->responseSchema(),
             ]);
 
-            $result = $openRouter->analyze($prompt, $chartDataUris);
+            $result = $openRouter->analyze($prompt, $promptImages);
             $parsed = $result['parsed'];
 
             $analysis->update([
@@ -114,6 +129,7 @@ class AnalyzeCurrencyJob implements ShouldQueue
                     'this_week' => $newsThis->pluck('id')->all(),
                     'next_week' => $newsNext->pluck('id')->all(),
                     'price'     => $priceSnapshot,
+                    'mode'      => $mode,
                 ],
                 'outlook' => $this->normalizeOutlook($parsed['outlook'] ?? null),
                 'bias_score' => $this->clampBiasScore($parsed['bias_score'] ?? null),
@@ -144,6 +160,30 @@ class AnalyzeCurrencyJob implements ShouldQueue
             throw $e;
         }
     }
+
+    /** Display-friendly price block when there's no EA bid/ask snapshot. */
+    private function priceSnapshotFromMarketData(array $snapshot): array
+    {
+        $price = $snapshot['current_price'] ?? null;
+        if ($price === null) {
+            return ['bid' => null, 'ask' => null, 'digits' => null, 'captured_at' => null, 'display' => 'unavailable'];
+        }
+        $digits = str_contains(strtoupper($snapshot['symbol']), 'JPY') ? 3
+                  : (str_starts_with(strtoupper($snapshot['symbol']), 'XAU') ? 2 : 5);
+        return [
+            'bid'         => $price,
+            'ask'         => $price,
+            'mid'         => $price,
+            'digits'      => $digits,
+            'captured_at' => $snapshot['as_of'] ?? null,
+            'display'     => sprintf(
+                'Spot %s  (source: Yahoo Finance, as of %s)',
+                number_format($price, $digits, '.', ''),
+                $snapshot['as_of'] ?? '?',
+            ),
+        ];
+    }
+
 
     public function failed(Throwable $e): void
     {

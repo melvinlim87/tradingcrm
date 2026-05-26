@@ -2,25 +2,27 @@
 
 namespace App\Console\Commands;
 
-use App\Models\ChartRequest;
+use App\Jobs\AnalyzeCurrencyJob;
 use App\Models\CurrencyAnalysis;
+use App\Models\OrderOpen;
+use App\Models\OrderPending;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use Throwable;
 
 class GenerateWeeklyAnalysisCommand extends Command
 {
     protected $signature = 'analysis:generate-weekly
-                            {--symbols= : Comma-separated list of symbols to queue (defaults to the 9 majors)}
+                            {--symbols= : Comma-separated list of symbols (defaults to the built-in 15-pair set)}
                             {--user= : User ID to attribute the analyses to}
-                            {--timeout=420 : Seconds to wait for each symbol before giving up (default 7 min)}
-                            {--poll=5 : Polling interval in seconds when waiting}';
+                            {--include-traded : Also include every symbol currently in open positions / pending orders}
+                            {--traded-only : Only run for currently-traded symbols (overrides --symbols and the default set)}
+                            {--force : Re-generate even if a completed analysis exists for this week}';
 
-    protected $description = 'Sequentially generate AI analysis for each major FX pair, waiting for each one to complete before starting the next (no queue worker required).';
+    protected $description = 'Run weekly AI analysis for each configured symbol — fetches charts + news and stores the result. Runs synchronously from the CLI; no queue worker needed.';
 
     /**
      * Default set of pairs covered by the weekly auto-analysis.
-     * - Row 1: base USD majors (one per base currency selector)
-     * - Row 2: cross pairs + commodity (from Analysis page "Cross Pairs" panel)
      */
     private const DEFAULT_SYMBOLS = [
         // USD majors
@@ -33,47 +35,65 @@ class GenerateWeeklyAnalysisCommand extends Command
 
     public function handle(): int
     {
-        // CLI script — let it run as long as it needs to. With sequential
-        // mode, 8 symbols at ~60s each = ~8 minutes worst case.
         @set_time_limit(0);
+        @ini_set('memory_limit', '512M');
 
-        $symbols = $this->option('symbols')
-            ? array_filter(array_map('trim', explode(',', $this->option('symbols'))))
-            : self::DEFAULT_SYMBOLS;
+        $tradedOnly    = (bool) $this->option('traded-only');
+        $includeTraded = (bool) $this->option('include-traded');
 
-        $userId  = $this->option('user') ? (int) $this->option('user') : null;
-        $timeout = max(60, (int) $this->option('timeout'));
-        $poll    = max(2, (int) $this->option('poll'));
+        if ($tradedOnly) {
+            $symbols = $this->tradedSymbols();
+            if (empty($symbols)) {
+                $this->warn('No symbols are currently being traded (no open positions / pending orders). Nothing to do.');
+                return Command::SUCCESS;
+            }
+        } else {
+            $symbols = $this->option('symbols')
+                ? array_filter(array_map('trim', explode(',', $this->option('symbols'))))
+                : self::DEFAULT_SYMBOLS;
 
-        $now = CarbonImmutable::now('Asia/Singapore');
+            if ($includeTraded) {
+                $symbols = array_values(array_unique(array_merge(
+                    array_map('strtoupper', $symbols),
+                    $this->tradedSymbols(),
+                )));
+            }
+        }
+
+        $userId = $this->option('user') ? (int) $this->option('user') : null;
+        $force  = (bool) $this->option('force');
+
+        $now       = CarbonImmutable::now('Asia/Singapore');
         $weekStart = $now->startOfWeek()->toDateString();
         $weekEnd   = $now->endOfWeek()->toDateString();
 
-        $this->info("Weekly analysis — sequential mode");
-        $this->line("  Symbols: " . implode(', ', $symbols));
+        $this->info("══ Weekly analysis ══");
+        $this->line('  Symbols: ' . count($symbols) . ' (' . implode(', ', $symbols) . ')');
         $this->line("  Week:    {$weekStart} → {$weekEnd}");
-        $this->line("  Timeout per symbol: {$timeout}s   Poll: {$poll}s");
         $this->newLine();
 
-        $stats = ['completed' => 0, 'failed' => 0, 'skipped' => 0, 'timeout' => 0];
-        $overallStart = microtime(true);
+        $completed = 0;
+        $failed    = 0;
+        $skipped   = 0;
+        $startedAt = microtime(true);
 
-        foreach ($symbols as $i => $symbol) {
+        foreach ($symbols as $symbol) {
             $symbol = strtoupper($symbol);
-            $prefix = sprintf('[%d/%d %s]', $i + 1, count($symbols), $symbol);
 
-            // Skip if a completed analysis already exists for this week
-            $existing = CurrencyAnalysis::where('symbol', $symbol)
-                ->where('week_start', $weekStart)
-                ->where('status', 'completed')
-                ->first();
-            if ($existing) {
-                $this->line("{$prefix} ↩ already completed this week (#{$existing->id})");
-                $stats['skipped']++;
-                continue;
+            // Skip if already completed this week (unless --force)
+            if (! $force) {
+                $existing = CurrencyAnalysis::where('symbol', $symbol)
+                    ->where('week_start', $weekStart)
+                    ->where('status', 'completed')
+                    ->first();
+                if ($existing) {
+                    $this->line("  ↩ {$symbol}  already completed this week (#{$existing->id})");
+                    $skipped++;
+                    continue;
+                }
             }
 
-            // Create analysis + chart request (status=pending)
+            // Create the analysis row (pending) — the job will flip it to completed/failed
             $analysis = CurrencyAnalysis::create([
                 'symbol'     => $symbol,
                 'week_start' => $weekStart,
@@ -82,89 +102,74 @@ class GenerateWeeklyAnalysisCommand extends Command
                 'user_id'    => $userId,
             ]);
 
-            ChartRequest::create([
-                'currency_analysis_id' => $analysis->id,
-                'symbol' => $symbol,
-                'status' => 'pending',
-            ]);
+            $tStart = microtime(true);
+            $this->line("  → {$symbol}  analysis #{$analysis->id} running...");
 
-            $this->info("{$prefix} → queued (analysis #{$analysis->id})");
-            $this->output->write("       waiting for EA → ");
+            try {
+                AnalyzeCurrencyJob::dispatchSync($analysis->id);
 
-            // Poll until analysis is completed or failed (or we time out)
-            $startedAt = microtime(true);
-            $finalStatus = null;
+                $analysis->refresh();
+                $elapsed = round(microtime(true) - $tStart, 1);
 
-            while (true) {
-                sleep($poll);
-
-                $fresh = $analysis->fresh();
-                if (! $fresh) {
-                    $finalStatus = 'gone';
-                    break;
+                if ($analysis->status === 'completed') {
+                    $this->info(sprintf(
+                        '    ✓ %s  outlook=%s  bias=%s  (%ss)',
+                        $symbol,
+                        $analysis->outlook ?? '—',
+                        $analysis->bias_score ?? '—',
+                        $elapsed,
+                    ));
+                    $completed++;
+                } else {
+                    $this->error(sprintf(
+                        '    ✗ %s  status=%s  err=%s',
+                        $symbol,
+                        $analysis->status,
+                        mb_strimwidth($analysis->error_message ?? '', 0, 100, '…'),
+                    ));
+                    $failed++;
                 }
-
-                if ($fresh->status === 'completed') {
-                    $finalStatus = 'completed';
-                    break;
-                }
-
-                if ($fresh->status === 'failed') {
-                    $finalStatus = 'failed';
-                    break;
-                }
-
-                if ((microtime(true) - $startedAt) > $timeout) {
-                    $finalStatus = 'timeout';
-                    break;
-                }
-
-                $this->output->write('.');
-            }
-
-            $elapsed = (int) round(microtime(true) - $startedAt);
-
-            switch ($finalStatus) {
-                case 'completed':
-                    $bias = $analysis->fresh()->bias_score;
-                    $outlook = $analysis->fresh()->outlook;
-                    $this->info(" ✓ done in {$elapsed}s (bias {$bias}/100, outlook {$outlook})");
-                    $stats['completed']++;
-                    break;
-
-                case 'failed':
-                    $err = $analysis->fresh()->error_message ?? 'unknown';
-                    $this->warn(" ✗ failed in {$elapsed}s — {$err}");
-                    $stats['failed']++;
-                    break;
-
-                case 'timeout':
-                    $this->warn(" ⏱ timeout after {$elapsed}s — EA may be offline. Marking failed.");
-                    $analysis->update([
-                        'status' => 'failed',
-                        'error_message' => "Weekly run timed out after {$timeout}s waiting for EA / OpenRouter",
-                    ]);
-                    $stats['timeout']++;
-                    break;
-
-                default:
-                    $this->error(" ? analysis row disappeared");
-                    $stats['failed']++;
+            } catch (Throwable $e) {
+                $analysis->update([
+                    'status'        => 'failed',
+                    'error_message' => $e->getMessage(),
+                ]);
+                $this->error("    ✗ {$symbol}  threw: " . mb_strimwidth($e->getMessage(), 0, 120, '…'));
+                $failed++;
             }
         }
 
-        $totalElapsed = (int) round(microtime(true) - $overallStart);
+        $totalElapsed = (int) round(microtime(true) - $startedAt);
+
         $this->newLine();
         $this->info(sprintf(
-            "Done in %dm %ds — completed: %d, failed: %d, timeout: %d, skipped: %d",
+            'Done in %dm %02ds — completed: %d, failed: %d, skipped: %d',
             intdiv($totalElapsed, 60),
             $totalElapsed % 60,
-            $stats['completed'],
-            $stats['failed'],
-            $stats['timeout'],
-            $stats['skipped'],
+            $completed,
+            $failed,
+            $skipped,
         ));
 
-        return $stats['failed'] + $stats['timeout'] > 0 ? Command::FAILURE : Command::SUCCESS;
+        return $failed > 0 ? Command::FAILURE : Command::SUCCESS;
+    }
+
+    /**
+     * Distinct symbols currently being traded (open positions + pending orders),
+     * normalised to canonical form (broker suffixes like .m / # / .raw stripped).
+     *
+     * @return array<int,string>
+     */
+    private function tradedSymbols(): array
+    {
+        $open    = OrderOpen::query()->distinct()->pluck('symbol');
+        $pending = OrderPending::query()->distinct()->pluck('symbol');
+
+        return $open->merge($pending)
+            ->map(fn ($s) => preg_replace('/[^A-Z]/', '', strtoupper((string) $s)))
+            ->filter(fn ($s) => strlen($s) >= 6 && strlen($s) <= 8)
+            ->unique()
+            ->values()
+            ->all();
     }
 }
