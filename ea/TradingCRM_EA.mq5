@@ -16,10 +16,10 @@
 //|         add: https://quant.lazetrader.com                         |
 //+------------------------------------------------------------------+
 #property copyright "TradingCRM"
-#property version   "3.70"
+#property version   "3.71"
 #property strict
 
-#define EA_VERSION "3.70"
+#define EA_VERSION "3.71"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -1336,20 +1336,33 @@ bool CalendarHasValue(long v)
    return true;
 }
 
-int PushMt5CalendarNews(int &outImported, int &outUpdated)
+// Returns # of events pushed (>0 on success). On failure returns 0 AND sets
+// `outReason` to a machine-readable code that's surfaced in the UI.
+int PushMt5CalendarNews(int &outImported, int &outUpdated, string &outReason)
 {
    outImported = 0;
    outUpdated  = 0;
-   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return 0;
+   outReason   = "";
+
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+   {
+      outReason = "mt5_disconnected";
+      return 0;
+   }
 
    datetime from = TimeCurrent() - (datetime)(InpNewsPushBackH * 3600);
    datetime to   = TimeCurrent() + (datetime)(InpNewsPushWindowH * 3600);
 
    MqlCalendarValue values[];
+   ResetLastError();
    int n = CalendarValueHistory(values, from, to);
    if(n <= 0)
    {
-      PrintFormat("[NewsPush] CalendarValueHistory returned %d", n);
+      int err = GetLastError();
+      PrintFormat("[NewsPush] CalendarValueHistory returned %d (err %d) — window %s..%s",
+                  n, err, TimeToString(from), TimeToString(to));
+      outReason = StringFormat("mt5_calendar_empty (err=%d, window=%dh back / %dh ahead)",
+                               err, InpNewsPushBackH, InpNewsPushWindowH);
       return 0;
    }
 
@@ -1357,17 +1370,18 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
    bool first = true;
    int pushed = 0;
    int max = MathMin(n, 500);
+   int skippedNoEvent = 0, skippedNoCountry = 0, skippedBadCurrency = 0;
 
    for(int i = 0; i < max; i++)
    {
       MqlCalendarEvent event;
-      if(!CalendarEventById(values[i].event_id, event)) continue;
+      if(!CalendarEventById(values[i].event_id, event)) { skippedNoEvent++; continue; }
 
       MqlCalendarCountry country;
-      if(!CalendarCountryById(event.country_id, country)) continue;
+      if(!CalendarCountryById(event.country_id, country)) { skippedNoCountry++; continue; }
 
       string currency = country.currency;
-      if(StringLen(currency) < 3) continue;
+      if(StringLen(currency) < 3) { skippedBadCurrency++; continue; }
 
       string eventAt = FormatIso8601(values[i].time);
 
@@ -1401,7 +1415,10 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
 
    if(pushed == 0)
    {
-      Print("[NewsPush] No usable MT5 calendar events in window.");
+      PrintFormat("[NewsPush] No usable events in %d raw values (skipped: no_event=%d, no_country=%d, bad_currency=%d)",
+                  n, skippedNoEvent, skippedNoCountry, skippedBadCurrency);
+      outReason = StringFormat("mt5_calendar_all_filtered (raw=%d, no_event=%d, no_country=%d, bad_currency=%d)",
+                               n, skippedNoEvent, skippedNoCountry, skippedBadCurrency);
       return 0;
    }
 
@@ -1424,14 +1441,18 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
       return pushed;
    }
 
-   PrintFormat("[NewsPush] HTTP %d (pushed %d events)", code, pushed);
+   string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   PrintFormat("[NewsPush] HTTP %d for %s (pushed %d events) body=%s",
+               code, url, pushed, StringSubstr(body, 0, 200));
+   outReason = StringFormat("backend_http_%d (url=%s)", code, url);
    return 0;
 }
 
 void PushMt5CalendarNewsPeriodic()
 {
    int imp = 0, upd = 0;
-   PushMt5CalendarNews(imp, upd);
+   string reason = "";
+   PushMt5CalendarNews(imp, upd, reason);
 }
 
 void PollNewsRequests()
@@ -1470,7 +1491,8 @@ void PollNewsRequests()
       PrintFormat("[NewsReq] Request #%d → fetching MT5 calendar...", reqId);
 
       int imported = 0, updated = 0;
-      int pushed = PushMt5CalendarNews(imported, updated);
+      string reason = "";
+      int pushed = PushMt5CalendarNews(imported, updated, reason);
 
       if(pushed > 0)
       {
@@ -1480,8 +1502,9 @@ void PollNewsRequests()
       }
       else
       {
-         FailNewsRequest(reqId, "no_events_or_post_failed");
-         PrintFormat("[NewsReq] #%d failed", reqId);
+         if(StringLen(reason) == 0) reason = "unknown";
+         FailNewsRequest(reqId, reason);
+         PrintFormat("[NewsReq] #%d failed: %s", reqId, reason);
       }
    }
 }

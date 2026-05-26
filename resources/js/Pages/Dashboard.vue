@@ -2,6 +2,7 @@
 import { onMounted, onBeforeUnmount, reactive, ref, computed, watch } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import PortfolioChart from '@/Components/PortfolioChart.vue';
 
 const props = defineProps({
     accounts: { type: Array, default: () => [] },
@@ -228,20 +229,17 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         </div>
                     </div>
 
-                    <!-- Profit chart -->
-                    <div v-if="overall.profit_series?.length > 1" class="border-b border-gray-200 bg-gray-50 px-6 py-3">
-                        <div class="flex flex-wrap items-center justify-between gap-4">
-                            <!-- Left: label + clickable info -->
+                    <!-- Overall cumulative-profit chart (one line, summed across all visible accounts) -->
+                    <div class="border-b border-gray-200 bg-white px-6 py-4">
+                        <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
                             <div class="relative flex items-center gap-2">
-                                <p class="text-sm font-bold text-black">Cumulative Profit</p>
+                                <p class="text-sm font-bold text-black">Cumulative Profit — Overall</p>
                                 <button
                                     type="button"
                                     @click="toggleInfo('overall')"
                                     class="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-400 text-xs text-gray-600 hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-700">
                                     ⓘ
                                 </button>
-
-                                <!-- Popover -->
                                 <div v-if="openInfo === 'overall'"
                                      class="absolute left-0 top-7 z-30 w-80 rounded-lg border-2 border-gray-300 bg-white p-4 text-xs shadow-2xl">
                                     <div class="flex items-start justify-between gap-2">
@@ -249,71 +247,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                         <button @click="closeInfo" class="text-base text-gray-500 hover:text-black">×</button>
                                     </div>
                                     <ul class="mt-2 space-y-1.5 text-black">
-                                        <li><strong>Source table:</strong> <code class="rounded bg-gray-100 px-1 font-mono">orders_history</code></li>
-                                        <li><strong>Scope:</strong> closed trades across <strong>all {{ overall.account_count }} visible account{{ overall.account_count === 1 ? '' : 's' }}</strong> (your role decides what's visible)</li>
-                                        <li><strong>Metric:</strong> <code>pnl</code> column = profit + swap + commission</li>
-                                        <li><strong>Bucket:</strong> grouped by close-day (Asia/Singapore), then cumulated</li>
-                                        <li><strong>Window:</strong> last <strong>60 trading days</strong> ({{ overall.profit_series.length }} day{{ overall.profit_series.length === 1 ? '' : 's' }} with closes)</li>
-                                        <li><strong>Refresh:</strong> only when a new trade closes — not every 10s like equity</li>
+                                        <li><strong>Source:</strong> <code class="rounded bg-gray-100 px-1 font-mono">orders_history</code></li>
+                                        <li><strong>Scope:</strong> closed trades <strong>summed</strong> across all {{ overall.account_count }} visible account{{ overall.account_count === 1 ? '' : 's' }}</li>
+                                        <li><strong>Metric:</strong> <code>pnl</code> = profit + swap + commission, grouped by close-day (GMT+8) then cumulated</li>
+                                        <li><strong>Window:</strong> last 60 trading days with closes</li>
                                     </ul>
                                 </div>
                             </div>
-
-                            <!-- Center: compact chart -->
-                            <svg viewBox="0 0 320 60" class="h-14 w-[320px] flex-shrink-0">
-                                <defs>
-                                    <linearGradient id="spark-grad-overall" x1="0" x2="0" y1="0" y2="1">
-                                        <stop offset="0%"   :stop-color="sparkPath(overall.profit_series).color" stop-opacity="0.35"/>
-                                        <stop offset="100%" :stop-color="sparkPath(overall.profit_series).color" stop-opacity="0"/>
-                                    </linearGradient>
-                                </defs>
-                                <!-- Zero baseline -->
-                                <line x1="0" x2="320"
-                                      :y1="sparkPath(overall.profit_series).max <= 0 ? 6 : (sparkPath(overall.profit_series).min >= 0 ? 54 : 30)"
-                                      :y2="sparkPath(overall.profit_series).max <= 0 ? 6 : (sparkPath(overall.profit_series).min >= 0 ? 54 : 30)"
-                                      stroke="#d1d5db" stroke-width="0.5" stroke-dasharray="2 2"/>
-                                <path :d="sparkPath(overall.profit_series).area" fill="url(#spark-grad-overall)" stroke="none"/>
-                                <path
-                                    :d="sparkPath(overall.profit_series).d"
-                                    fill="none"
-                                    :stroke="sparkPath(overall.profit_series).color"
-                                    stroke-width="1.6"
-                                    stroke-linejoin="round"
-                                    stroke-linecap="round"
-                                />
-                                <circle v-if="sparkPath(overall.profit_series).maxPt"
-                                    :cx="sparkPath(overall.profit_series).maxPt.x"
-                                    :cy="sparkPath(overall.profit_series).maxPt.y"
-                                    r="2.5" fill="#16a34a"/>
-                                <circle v-if="sparkPath(overall.profit_series).minPt"
-                                    :cx="sparkPath(overall.profit_series).minPt.x"
-                                    :cy="sparkPath(overall.profit_series).minPt.y"
-                                    r="2.5" fill="#dc2626"/>
-                                <circle
-                                    :cx="sparkPath(overall.profit_series).points.at(-1).x"
-                                    :cy="sparkPath(overall.profit_series).points.at(-1).y"
-                                    r="3"
-                                    :fill="sparkPath(overall.profit_series).color"
-                                    stroke="white" stroke-width="1.5"/>
-                            </svg>
-
-                            <!-- Right: numeric summary -->
-                            <div class="flex flex-col items-end">
-                                <p class="font-mono text-lg font-bold"
-                                   :class="pctClass(sparkPath(overall.profit_series).last)">
-                                    {{ fmt(sparkPath(overall.profit_series).last) }}
-                                </p>
-                                <p class="text-[11px] text-gray-600">cumulative PnL</p>
-                            </div>
                         </div>
 
-                        <p class="mt-1 text-[11px] text-gray-500">
-                            <span class="font-mono">{{ overall.profit_series[0]?.label }}</span>
-                            <span class="mx-1">→</span>
-                            <span class="font-mono">{{ overall.profit_series.at(-1)?.label }}</span>
-                            · {{ overall.profit_series.length }} day{{ overall.profit_series.length === 1 ? '' : 's' }} with closed trades
-                            · click <strong>ⓘ</strong> to see how this chart is computed
-                        </p>
+                        <PortfolioChart :series="overall.profit_series || []" label="Portfolio P&L" :height="280" />
                     </div>
 
                     <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-5">
@@ -491,8 +434,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                             </div>
 
                             <!-- Profit chart per account -->
-                            <div v-if="acc.profit_series?.length > 1" class="relative border-b border-gray-200 bg-gray-50 px-6 py-2">
-                                <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div v-if="acc.profit_series?.length > 1" class="relative border-b border-gray-200 bg-white px-6 py-3">
+                                <div class="mb-2 flex flex-wrap items-center justify-between gap-3">
                                     <div class="relative flex items-center gap-2">
                                         <p class="text-sm font-bold text-black">Cumulative Profit</p>
                                         <button
@@ -519,41 +462,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                         </div>
                                     </div>
 
-                                    <svg viewBox="0 0 280 44" class="h-11 w-[280px] flex-shrink-0">
-                                        <defs>
-                                            <linearGradient :id="`spark-grad-${acc.id}`" x1="0" x2="0" y1="0" y2="1">
-                                                <stop offset="0%"   :stop-color="sparkPath(acc.profit_series, 280, 44).color" stop-opacity="0.30"/>
-                                                <stop offset="100%" :stop-color="sparkPath(acc.profit_series, 280, 44).color" stop-opacity="0"/>
-                                            </linearGradient>
-                                        </defs>
-                                        <line x1="0" x2="280"
-                                              :y1="sparkPath(acc.profit_series, 280, 44).max <= 0 ? 6 : (sparkPath(acc.profit_series, 280, 44).min >= 0 ? 38 : 22)"
-                                              :y2="sparkPath(acc.profit_series, 280, 44).max <= 0 ? 6 : (sparkPath(acc.profit_series, 280, 44).min >= 0 ? 38 : 22)"
-                                              stroke="#d1d5db" stroke-width="0.5" stroke-dasharray="2 2"/>
-                                        <path :d="sparkPath(acc.profit_series, 280, 44).area"
-                                              :fill="`url(#spark-grad-${acc.id})`" stroke="none"/>
-                                        <path :d="sparkPath(acc.profit_series, 280, 44).d"
-                                              fill="none"
-                                              :stroke="sparkPath(acc.profit_series, 280, 44).color"
-                                              stroke-width="1.5"
-                                              stroke-linejoin="round"
-                                              stroke-linecap="round"/>
-                                        <circle
-                                            :cx="sparkPath(acc.profit_series, 280, 44).points.at(-1).x"
-                                            :cy="sparkPath(acc.profit_series, 280, 44).points.at(-1).y"
-                                            r="2.5"
-                                            :fill="sparkPath(acc.profit_series, 280, 44).color"
-                                            stroke="white" stroke-width="1.2"/>
-                                    </svg>
-
                                     <div class="flex flex-col items-end">
                                         <p class="font-mono text-sm font-bold"
-                                           :class="pctClass(sparkPath(acc.profit_series, 280, 44).last)">
-                                            {{ fmt(sparkPath(acc.profit_series, 280, 44).last) }}
+                                           :class="pctClass(Number(acc.profit_series.at(-1)?.v || 0))">
+                                            {{ fmt(Number(acc.profit_series.at(-1)?.v || 0)) }}
                                         </p>
                                         <p class="text-[11px] text-gray-600">cumulative PnL</p>
                                     </div>
                                 </div>
+
+                                <PortfolioChart :series="acc.profit_series || []" :label="`#${acc.account_number} P&L`" :height="220" />
                             </div>
 
                             <!-- Metric grid: 7 cards now (added Max ABS / Max EQ) -->
