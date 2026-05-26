@@ -95,15 +95,18 @@ class AnalysisController extends Controller
                 ->between($anchor->startOfWeek()->utc(), $anchor->endOfWeek()->utc())
                 ->orderBy('event_at')
                 ->get([
-                    'id', 'title', 'currency', 'impact',
+                    'id', 'title', 'subject', 'category', 'currency', 'impact',
                     'forecast', 'previous', 'actual', 'event_at',
-                    'source', 'mt5_event_id',
+                    'source', 'mt5_event_id', 'external_id',
+                    'source_url', 'unit', 'sector', 'frequency', 'event_type',
                     'measures', 'usual_effect', 'traders_care', 'notes',
+                    // body_html is heavy — DON'T load in list; fetch on demand
                 ])
                 ->map(function ($n) {
                     return [
                         'id'          => $n->id,
-                        'title'       => $n->title,
+                        'title'       => $n->subject ?: $n->title,
+                        'category'    => $n->category,
                         'currency'    => $n->currency,
                         'impact'      => strtoupper($n->impact),
                         'forecast'    => $n->forecast,
@@ -113,6 +116,13 @@ class AnalysisController extends Controller
                         'event_at_iso'=> optional($n->event_at)->setTimezone('Asia/Singapore')->toIso8601String(),
                         'source'      => $n->source ?: 'forexfactory',
                         'mt5_event_id'=> $n->mt5_event_id,
+                        'external_id' => $n->external_id,
+                        // MT5 calendar metadata (v3.70+)
+                        'source_url'  => $n->source_url,
+                        'unit'        => $n->unit,
+                        'sector'      => $n->sector,
+                        'frequency'   => $n->frequency,
+                        'event_type'  => $n->event_type,
                         // MT5 popup details (only populated for some events)
                         'measures'    => $n->measures,
                         'usual_effect'=> $n->usual_effect,
@@ -195,6 +205,28 @@ class AnalysisController extends Controller
             'id'      => $req->id,
             'status'  => $req->status,
             'message' => 'Queued. The EA polls every ~10s and will fulfill this shortly.',
+        ]);
+    }
+
+    /**
+     * Fetch the full HTML body for one news item — only used when the trader
+     * actually clicks a broker-news row. Keeps the list payload lean.
+     */
+    public function newsBody(int $id): JsonResponse
+    {
+        $news = ForexNews::select(['id','title','subject','category','source','event_at','currency','body_html','external_id'])
+            ->findOrFail($id);
+
+        return response()->json([
+            'id'         => $news->id,
+            'subject'    => $news->subject ?: $news->title,
+            'category'   => $news->category,
+            'source'     => $news->source,
+            'currency'   => $news->currency,
+            'event_at'   => optional($news->event_at)
+                ->setTimezone('Asia/Singapore')->format('Y-m-d H:i'),
+            'has_body'   => ! empty($news->body_html),
+            'body_html'  => $news->body_html ?: null,
         ]);
     }
 

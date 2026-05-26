@@ -119,6 +119,81 @@ class EaNewsController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    /**
+     * Receive a batch of MT5 BROKER news (Trading Central, etc.) — these are the
+     * items that appear under the "News" tab in MT5 terminal with HTML bodies.
+     * Each broker drops these as .htm files into MQL5/Files; the EA scans the
+     * folder and POSTs the parsed contents here.
+     *
+     * Expected payload:
+     * {
+     *   "items": [
+     *     {
+     *       "external_id": "tc-12345",         // unique per broker source
+     *       "subject":  "Cac 40 ST: watch 8361.",
+     *       "category": "Trading Central - Analyst Views",
+     *       "currency": "EUR",                  // optional best-guess
+     *       "event_at": "2026-05-26T15:54:00Z",
+     *       "body_html": "<html>...</html>"     // full HTML preview
+     *     }, ...
+     *   ]
+     * }
+     */
+    public function pushBrokerNews(Request $request): JsonResponse
+    {
+        $items = (array) $request->input('items', []);
+        if (empty($items)) {
+            return response()->json(['error' => 'No items provided'], 422);
+        }
+
+        $imported = 0; $updated = 0; $skipped = 0;
+
+        foreach ($items as $it) {
+            try {
+                $subject = trim((string) ($it['subject'] ?? $it['title'] ?? ''));
+                if ($subject === '') { $skipped++; continue; }
+
+                $eventAt = $this->parseDate($it['event_at'] ?? null) ?? Carbon::now()->utc();
+                $externalId = isset($it['external_id']) ? (string) $it['external_id'] : null;
+
+                // Dedupe key: external_id if given, else (subject + event_at)
+                $lookup = $externalId
+                    ? ['external_id' => $externalId, 'source' => 'mt5_broker_news']
+                    : ['title' => $subject, 'event_at' => $eventAt, 'source' => 'mt5_broker_news'];
+
+                $record = ForexNews::updateOrCreate(
+                    $lookup,
+                    [
+                        'title'       => $subject,
+                        'subject'     => $subject,
+                        'category'    => (string) ($it['category'] ?? 'MT5 News'),
+                        'body_html'   => (string) ($it['body_html'] ?? ''),
+                        'currency'    => strtoupper(trim((string) ($it['currency'] ?? ''))),
+                        'impact'      => 'LOW',     // broker analyst news has no formal "impact"
+                        'event_at'    => $eventAt,
+                        'raw_date'    => $it['event_at'] ?? null,
+                        'source'      => 'mt5_broker_news',
+                        'external_id' => $externalId,
+                    ],
+                );
+
+                $record->wasRecentlyCreated ? $imported++ : $updated++;
+            } catch (Throwable $ex) {
+                Log::warning('EA broker-news push: bad item', [
+                    'error' => $ex->getMessage(),
+                    'subject' => $it['subject'] ?? '?',
+                ]);
+                $skipped++;
+            }
+        }
+
+        return response()->json([
+            'imported' => $imported,
+            'updated'  => $updated,
+            'skipped'  => $skipped,
+        ]);
+    }
+
     public function push(Request $request): JsonResponse
     {
         $events = (array) $request->input('events', []);
@@ -145,14 +220,20 @@ class EaNewsController extends Controller
                         'event_at' => $eventAt,
                     ],
                     [
-                        'currency' => strtoupper(trim((string) ($e['currency'] ?? ''))),
-                        'impact' => $this->normalizeImpact($e['impact'] ?? 'LOW'),
-                        'forecast' => $this->nullIfEmpty($e['forecast'] ?? null),
-                        'previous' => $this->nullIfEmpty($e['previous'] ?? null),
-                        'actual' => $this->nullIfEmpty($e['actual'] ?? null),
-                        'raw_date' => $e['event_at'] ?? null,
-                        'source' => 'mt5',
+                        'currency'     => strtoupper(trim((string) ($e['currency'] ?? ''))),
+                        'impact'       => $this->normalizeImpact($e['impact'] ?? 'LOW'),
+                        'forecast'     => $this->nullIfEmpty($e['forecast'] ?? null),
+                        'previous'     => $this->nullIfEmpty($e['previous'] ?? null),
+                        'actual'       => $this->nullIfEmpty($e['actual'] ?? null),
+                        'raw_date'     => $e['event_at'] ?? null,
+                        'source'       => 'mt5',
                         'mt5_event_id' => isset($e['event_id']) ? (int) $e['event_id'] : null,
+                        // Extended MqlCalendarEvent metadata (v3.70+)
+                        'source_url'   => $this->nullIfBlank($e['source_url'] ?? null),
+                        'unit'         => $this->nullIfBlank($e['unit'] ?? null),
+                        'sector'       => $this->nullIfBlank($e['sector'] ?? null),
+                        'frequency'    => $this->nullIfBlank($e['frequency'] ?? null),
+                        'event_type'   => $this->nullIfBlank($e['event_type'] ?? null),
                     ],
                 );
 
@@ -203,5 +284,12 @@ class EaNewsController extends Controller
         }
 
         return $v;
+    }
+
+    /** Trim string + return null if empty. Non-numeric so no sentinel check. */
+    private function nullIfBlank(?string $v): ?string
+    {
+        $v = trim((string) $v);
+        return $v === '' ? null : $v;
     }
 }

@@ -16,10 +16,10 @@
 //|         add: http://127.0.0.1:8000                               |
 //+------------------------------------------------------------------+
 #property copyright "TradingCRM"
-#property version   "3.51"
+#property version   "3.70"
 #property strict
 
-#define EA_VERSION "3.51"
+#define EA_VERSION "3.70"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -38,6 +38,8 @@ input int     InpNewsRefreshSec     = 60;    // On-chart News panel refresh (0 =
 input int     InpNewsPushInterval   = 900;   // POST MT5 calendar → backend every N sec (0 = disable)
 input int     InpNewsPushWindowH    = 168;   // How far ahead to look (168h = 7d)
 input int     InpNewsPushBackH      = 168;   // How far back to look (168h = 7d)
+input int     InpBrokerNewsInterval = 300;   // Scan MQL5/Files/news/*.htm → POST every N sec (0=off)
+input string  InpBrokerNewsFolder   = "news";// Subfolder under MQL5/Files where broker drops .htm
 
 //=== NEWS PANEL (on-chart) ======================================================
 // Defaults are tuned to drop into the empty 6th cell of CDashboard
@@ -180,9 +182,10 @@ int OnInit()
    Print("  Build flags: ResolveBrokerSymbol=ON  NewsPanel=ON");
    Print("==================================================");
    PrintFormat("  Backend: %s", InpBackendBase);
-   PrintFormat("  Timers — Signal:%ds  RiskPush:%ds  ChartPoll:%ds  NewsPanel:%ds  NewsPush:%ds",
+   PrintFormat("  Timers — Signal:%ds  RiskPush:%ds  ChartPoll:%ds  NewsPanel:%ds  CalPush:%ds  BrokerNews:%ds",
                InpSignalInterval, InpRiskPushInterval, InpChartPollInterval,
-               InpNewsRefreshSec, InpNewsPushInterval);
+               InpNewsRefreshSec, InpNewsPushInterval, InpBrokerNewsInterval);
+   PrintFormat("  Broker news folder: MQL5/Files/%s/*.htm", InpBrokerNewsFolder);
 
    if(!g_logger.Init(InpEnableCSVLog, "TradingCRM"))
    {
@@ -301,6 +304,14 @@ void OnTimer()
    {
       PushMt5CalendarNewsPeriodic();
       last_news_push = current_time;
+   }
+
+   static datetime last_broker_news_scan = 0;
+   if(InpBrokerNewsInterval > 0 &&
+      current_time - last_broker_news_scan >= InpBrokerNewsInterval)
+   {
+      ScanBrokerNewsFolder();
+      last_broker_news_scan = current_time;
    }
 
    if((current_time - g_last_dashboard_update) >= g_dashboard_update_interval)
@@ -1269,6 +1280,74 @@ string Mt5ImportanceToImpact(int importance)
    }
 }
 
+string Mt5UnitName(int unit)
+{
+   switch(unit)
+   {
+      case CALENDAR_UNIT_PERCENT:      return "%";
+      case CALENDAR_UNIT_CURRENCY:     return "currency";
+      case CALENDAR_UNIT_HOUR:         return "hours";
+      case CALENDAR_UNIT_JOB:          return "jobs";
+      case CALENDAR_UNIT_RIG:          return "rigs";
+      case CALENDAR_UNIT_USD:          return "USD";
+      case CALENDAR_UNIT_PEOPLE:       return "people";
+      case CALENDAR_UNIT_MORTGAGE:     return "mortgages";
+      case CALENDAR_UNIT_VOTE:         return "votes";
+      case CALENDAR_UNIT_BARREL:       return "barrels";
+      case CALENDAR_UNIT_CUBICFEET:    return "cu.ft";
+      case CALENDAR_UNIT_POSITION:     return "positions";
+      case CALENDAR_UNIT_BUILDING:     return "buildings";
+      case CALENDAR_UNIT_NONE:
+      default:                         return "";
+   }
+}
+
+string Mt5SectorName(int sector)
+{
+   switch(sector)
+   {
+      case CALENDAR_SECTOR_MARKET:           return "Market";
+      case CALENDAR_SECTOR_GDP:              return "GDP";
+      case CALENDAR_SECTOR_JOBS:             return "Jobs";
+      case CALENDAR_SECTOR_PRICES:           return "Prices";
+      case CALENDAR_SECTOR_MONEY:            return "Money";
+      case CALENDAR_SECTOR_TRADE:            return "Trade";
+      case CALENDAR_SECTOR_GOVERNMENT:       return "Government";
+      case CALENDAR_SECTOR_BUSINESS:         return "Business";
+      case CALENDAR_SECTOR_CONSUMER:         return "Consumer";
+      case CALENDAR_SECTOR_HOUSING:          return "Housing";
+      case CALENDAR_SECTOR_TAXES:            return "Taxes";
+      case CALENDAR_SECTOR_HOLIDAYS:         return "Holidays";
+      case CALENDAR_SECTOR_NONE:
+      default:                               return "";
+   }
+}
+
+string Mt5FrequencyName(int frequency)
+{
+   switch(frequency)
+   {
+      case CALENDAR_FREQUENCY_WEEK:      return "Weekly";
+      case CALENDAR_FREQUENCY_MONTH:     return "Monthly";
+      case CALENDAR_FREQUENCY_QUARTER:   return "Quarterly";
+      case CALENDAR_FREQUENCY_YEAR:      return "Yearly";
+      case CALENDAR_FREQUENCY_DAY:       return "Daily";
+      case CALENDAR_FREQUENCY_NONE:
+      default:                           return "";
+   }
+}
+
+string Mt5EventTypeName(int type)
+{
+   switch(type)
+   {
+      case CALENDAR_TYPE_EVENT:      return "event";
+      case CALENDAR_TYPE_INDICATOR:  return "indicator";
+      case CALENDAR_TYPE_HOLIDAY:    return "holiday";
+      default:                       return "";
+   }
+}
+
 //+------------------------------------------------------------------+
 //| MT5 marks empty numeric fields with LONG_MIN (sometimes LONG_MAX |
 //| on older builds). Reject those sentinels AND any absurdly large  |
@@ -1349,7 +1428,12 @@ int PushMt5CalendarNews(int &outImported, int &outUpdated)
       json += "\"forecast\":\"" + forecast                   + "\",";
       json += "\"previous\":\"" + previous                   + "\",";
       json += "\"actual\":\""   + actual                     + "\",";
-      json += "\"event_at\":\"" + eventAt                    + "Z\"";
+      json += "\"event_at\":\"" + eventAt                    + "Z\",";
+      json += "\"source_url\":\"" + JsonEscape(event.source_url)        + "\",";
+      json += "\"unit\":\""       + Mt5UnitName(event.unit)             + "\",";
+      json += "\"sector\":\""     + Mt5SectorName(event.sector)         + "\",";
+      json += "\"frequency\":\""  + Mt5FrequencyName(event.frequency)   + "\",";
+      json += "\"event_type\":\"" + Mt5EventTypeName(event.type)        + "\"";
       json += "}";
       first = false;
       pushed++;
@@ -1484,6 +1568,195 @@ string JsonEscape(string s)
    StringReplace(s, "\r", " ");
    StringReplace(s, "\t", " ");
    return s;
+}
+
+// Same as above but PRESERVES \n / \r as escaped \\n \\r (so HTML newlines
+// survive the JSON round-trip).
+string JsonEscapeKeepNewlines(string s)
+{
+   StringReplace(s, "\\", "\\\\");
+   StringReplace(s, "\"", "\\\"");
+   StringReplace(s, "\r\n", "\\n");
+   StringReplace(s, "\n", "\\n");
+   StringReplace(s, "\r", "\\n");
+   StringReplace(s, "\t", "\\t");
+   return s;
+}
+
+//+------------------------------------------------------------------+
+//| Tracks files we've already uploaded so we don't re-push them on  |
+//| every scan. Persisted in MQL5/Files for survival across reloads. |
+//+------------------------------------------------------------------+
+string  g_uploaded_news[];
+bool    g_uploaded_loaded = false;
+
+void LoadUploadedNewsList()
+{
+   if(g_uploaded_loaded) return;
+   ArrayResize(g_uploaded_news, 0);
+   int h = FileOpen("uploaded_news.txt", FILE_READ | FILE_TXT | FILE_ANSI);
+   if(h != INVALID_HANDLE)
+   {
+      while(!FileIsEnding(h))
+      {
+         string line = FileReadString(h);
+         StringTrimLeft(line); StringTrimRight(line);
+         if(StringLen(line) > 0)
+         {
+            int n = ArraySize(g_uploaded_news);
+            ArrayResize(g_uploaded_news, n + 1);
+            g_uploaded_news[n] = line;
+         }
+      }
+      FileClose(h);
+   }
+   g_uploaded_loaded = true;
+}
+
+void RememberUploadedNews(string filename)
+{
+   int n = ArraySize(g_uploaded_news);
+   ArrayResize(g_uploaded_news, n + 1);
+   g_uploaded_news[n] = filename;
+   int h = FileOpen("uploaded_news.txt", FILE_WRITE | FILE_READ | FILE_TXT | FILE_ANSI);
+   if(h != INVALID_HANDLE)
+   {
+      FileSeek(h, 0, SEEK_END);
+      FileWrite(h, filename);
+      FileClose(h);
+   }
+}
+
+bool WasUploadedNews(string filename)
+{
+   for(int i = 0; i < ArraySize(g_uploaded_news); i++)
+      if(g_uploaded_news[i] == filename) return true;
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Scan MQL5/Files/<InpBrokerNewsFolder>/ for new *.htm files       |
+//| dropped by the broker (Trading Central etc.), parse subject /    |
+//| category / time + full HTML body, POST to /api/ea/news/broker.   |
+//+------------------------------------------------------------------+
+void ScanBrokerNewsFolder()
+{
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;
+   LoadUploadedNewsList();
+
+   string pattern = InpBrokerNewsFolder + "\\*.htm";
+   string filename = "";
+   long handle = FileFindFirst(pattern, filename);
+   if(handle == INVALID_HANDLE)
+   {
+      // Folder may not exist on this broker — silent.
+      return;
+   }
+
+   int pushed = 0;
+   do
+   {
+      if(StringFind(filename, ".htm") < 0) continue;
+
+      string fullPath = InpBrokerNewsFolder + "\\" + filename;
+      if(WasUploadedNews(fullPath)) continue;
+
+      string html = ReadFileFully(fullPath);
+      if(StringLen(html) < 50) continue;
+
+      string subject  = ExtractHtmlTitle(html);
+      string category = "MT5 Broker News";   // can refine per broker
+      string extId    = filename;             // unique per file
+
+      if(PushBrokerNewsItem(extId, subject, category, html))
+      {
+         RememberUploadedNews(fullPath);
+         pushed++;
+      }
+   } while(FileFindNext(handle, filename));
+   FileFindClose(handle);
+
+   if(pushed > 0)
+      PrintFormat("[BrokerNews] Pushed %d new HTML article(s) from MQL5/Files/%s/",
+                  pushed, InpBrokerNewsFolder);
+}
+
+string ReadFileFully(string path)
+{
+   // Pass 1 — try UTF-16 (MT5 saves broker news .htm files as UTF-16 LE
+   // with BOM, which FILE_UNICODE handles natively).
+   int h = FileOpen(path, FILE_READ | FILE_TXT | FILE_UNICODE);
+   if(h != INVALID_HANDLE)
+   {
+      string body = "";
+      while(!FileIsEnding(h))
+      {
+         body += FileReadString(h);
+         if(!FileIsEnding(h)) body += "\n";
+      }
+      FileClose(h);
+      if(StringLen(body) >= 20) return body;
+   }
+
+   // Pass 2 — UTF-8 / ANSI fallback (some brokers save as plain UTF-8)
+   h = FileOpen(path, FILE_READ | FILE_TXT | FILE_ANSI);
+   if(h != INVALID_HANDLE)
+   {
+      string body = "";
+      while(!FileIsEnding(h))
+      {
+         body += FileReadString(h);
+         if(!FileIsEnding(h)) body += "\n";
+      }
+      FileClose(h);
+      return body;
+   }
+
+   return "";
+}
+
+string ExtractHtmlTitle(string html)
+{
+   int s = StringFind(html, "<title>");
+   if(s < 0) s = StringFind(html, "<TITLE>");
+   if(s < 0) return "Untitled MT5 News";
+   s += 7;
+   int e = StringFind(html, "</title>", s);
+   if(e < 0) e = StringFind(html, "</TITLE>", s);
+   if(e < 0) return "Untitled MT5 News";
+   string t = StringSubstr(html, s, e - s);
+   StringTrimLeft(t); StringTrimRight(t);
+   return t;
+}
+
+bool PushBrokerNewsItem(string extId, string subject, string category, string html)
+{
+   string nowIso = FormatIso8601(TimeCurrent());
+
+   string json = "{\"items\":[{";
+   json += "\"external_id\":\"" + JsonEscape(extId)         + "\",";
+   json += "\"subject\":\""     + JsonEscape(subject)       + "\",";
+   json += "\"category\":\""    + JsonEscape(category)      + "\",";
+   json += "\"event_at\":\""    + nowIso                    + "Z\",";
+   json += "\"body_html\":\""   + JsonEscapeKeepNewlines(html) + "\"";
+   json += "}]}";
+
+   char postData[]; char result[]; string resHeaders;
+   string headers = "Content-Type: application/json\r\n" +
+                    "Authorization: Bearer " + InpEaToken + "\r\n";
+   string url = EndpointUrl("/news/broker");
+
+   StringToCharArray(json, postData, 0, WHOLE_ARRAY, CP_UTF8);
+   ArrayResize(postData, ArraySize(postData) - 1);
+
+   int code = WebRequest("POST", url, headers, 30000, postData, result, resHeaders);
+   if(code >= 200 && code < 300)
+   {
+      PrintFormat("[BrokerNews] ✓ '%s' (%d bytes)", subject, StringLen(html));
+      return true;
+   }
+   PrintFormat("[BrokerNews] ✗ HTTP %d for '%s'", code, subject);
+   return false;
 }
 
 long ParseDisplayTime(string mmddHHMM)

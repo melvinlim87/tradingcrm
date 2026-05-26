@@ -14,6 +14,9 @@ class ForexNews extends Model
 
     protected $fillable = [
         'title',
+        'subject',
+        'category',
+        'body_html',
         'currency',
         'impact',
         'forecast',
@@ -27,7 +30,22 @@ class ForexNews extends Model
         'raw_date',
         'source',
         'mt5_event_id',
+        'external_id',
+        'source_url',
+        'unit',
+        'sector',
+        'frequency',
+        'event_type',
     ];
+
+    /**
+     * Quick check whether this row is broker-analyst news (HTML body) vs
+     * a structured calendar event.
+     */
+    public function isBrokerNews(): bool
+    {
+        return $this->source === 'mt5_broker_news' || ! empty($this->body_html);
+    }
 
     protected $casts = [
         'event_at' => 'datetime',

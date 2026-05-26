@@ -104,8 +104,11 @@ const forexFactoryUrl = (item) => {
 };
 
 const openNewsDetail = (item) => {
-    if (item.source === 'mt5') {
-        // MT5 news — show in-app popup only (no public detail page exists)
+    if (item.source === 'mt5_broker_news') {
+        // MT5 broker-analyst news — open the full HTML body in a sandboxed iframe
+        openBrokerNewsPreview(item);
+    } else if (item.source === 'mt5') {
+        // MT5 calendar event — show structured in-app popup
         selectedNews.value = item;
     } else {
         // ForexFactory news — redirect straight to the calendar day for this event
@@ -117,9 +120,33 @@ const closeNewsDetail = () => { selectedNews.value = null; };
 
 // Source badge colors
 const sourceLabel = (src) => ({
-    forexfactory: { text: 'ForexFactory', cls: 'bg-blue-100 text-blue-800 border border-blue-300' },
-    mt5:          { text: 'MetaTrader',   cls: 'bg-orange-100 text-orange-800 border border-orange-300' },
+    forexfactory:    { text: 'ForexFactory', cls: 'bg-blue-100 text-blue-800 border border-blue-300' },
+    mt5:             { text: 'MT5 Calendar', cls: 'bg-orange-100 text-orange-800 border border-orange-300' },
+    mt5_broker_news: { text: 'MT5 News',     cls: 'bg-purple-100 text-purple-800 border border-purple-300' },
 }[src] || { text: src || 'unknown', cls: 'bg-gray-100 text-gray-800 border border-gray-300' });
+
+// ───────────────── Broker-news HTML preview ─────────────────
+const previewNews = ref(null);          // { id, subject, category, body_html, ... }
+const previewLoading = ref(false);
+
+const openBrokerNewsPreview = async (item) => {
+    previewLoading.value = true;
+    previewNews.value = { ...item, body_html: null };       // placeholder
+    try {
+        const r = await fetch(route('analysis.news.body', item.id), {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        });
+        const d = await r.json();
+        previewNews.value = d;
+    } catch (e) {
+        previewNews.value = { ...item, body_html: '<p style="padding:1rem;color:red">Failed to load preview.</p>' };
+    } finally {
+        previewLoading.value = false;
+    }
+};
+
+const closeBrokerNewsPreview = () => { previewNews.value = null; };
 
 // Filter news by impact. By default only HIGH; toggle reveals MEDIUM/LOW.
 const filteredNews = computed(() => {
@@ -707,7 +734,8 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                     <th class="px-4 py-2">Currency</th>
                                     <th class="px-4 py-2">Impact</th>
                                     <th class="px-4 py-2">Source</th>
-                                    <th class="px-4 py-2">Event</th>
+                                    <th class="px-4 py-2">Category</th>
+                                    <th class="px-4 py-2">Subject / Event</th>
                                     <th class="px-4 py-2 text-right">Forecast</th>
                                     <th class="px-4 py-2 text-right">Previous</th>
                                     <th class="px-4 py-2 text-right">Actual</th>
@@ -731,8 +759,10 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                         <span :class="['rounded-full px-2 py-0.5 text-xs font-bold', sourceLabel(n.source).cls]">
                                             {{ sourceLabel(n.source).text }}
                                             <span v-if="n.source === 'forexfactory'" class="ml-0.5">↗</span>
+                                            <span v-if="n.source === 'mt5_broker_news'" class="ml-0.5">📰</span>
                                         </span>
                                     </td>
+                                    <td class="whitespace-nowrap px-4 py-2 text-black">{{ n.category || '—' }}</td>
                                     <td class="px-4 py-2 text-black underline decoration-dotted">{{ n.title }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-black">{{ n.forecast || '—' }}</td>
                                     <td class="whitespace-nowrap px-4 py-2 text-right font-mono text-black">{{ n.previous || '—' }}</td>
@@ -756,6 +786,58 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                         </p>
                     </div>
                 </section>
+
+                <!-- ===== MT5 BROKER NEWS HTML preview (like the MT5 terminal News tab) ===== -->
+                <div v-if="previewNews"
+                     class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                     @click.self="closeBrokerNewsPreview">
+                    <div class="flex w-full max-w-4xl flex-col rounded-lg bg-white shadow-2xl"
+                         style="max-height: 90vh">
+                        <!-- Header bar -->
+                        <div class="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50 px-5 py-3 rounded-t-lg">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="rounded bg-purple-600 px-2 py-0.5 text-xs font-bold uppercase text-white">📰 MT5 News</span>
+                                    <span v-if="previewNews.category" class="text-sm font-bold text-black">{{ previewNews.category }}</span>
+                                    <span class="font-mono text-sm text-black">{{ previewNews.event_at }} GMT+8</span>
+                                </div>
+                                <h3 class="mt-1 text-lg font-bold text-black">{{ previewNews.subject || previewNews.title }}</h3>
+                            </div>
+                            <button @click="closeBrokerNewsPreview" class="text-3xl text-gray-500 hover:text-red-600">×</button>
+                        </div>
+
+                        <!-- HTML body sandboxed in iframe (no JS, no parent access) -->
+                        <div class="flex-1 overflow-hidden bg-white p-2">
+                            <div v-if="previewLoading" class="flex h-full items-center justify-center p-12 text-black">
+                                <svg class="mr-3 h-5 w-5 animate-spin text-purple-600" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+                                </svg>
+                                Loading article...
+                            </div>
+                            <iframe
+                                v-else-if="previewNews.body_html"
+                                :srcdoc="previewNews.body_html"
+                                sandbox="allow-same-origin allow-popups"
+                                referrerpolicy="no-referrer"
+                                class="h-full min-h-[60vh] w-full rounded border border-gray-200"
+                            ></iframe>
+                            <p v-else class="px-6 py-10 text-center text-sm italic text-black">
+                                No HTML body available for this item.
+                                <br>(The MT5 broker hadn't pushed a body when this row was created — try refreshing later.)
+                            </p>
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="border-t border-gray-200 bg-gray-50 px-5 py-2 rounded-b-lg">
+                            <p class="text-xs text-black">
+                                Source: MT5 broker News feed
+                                <span v-if="previewNews.external_id"> · ID <code class="rounded bg-gray-200 px-1 font-mono">{{ previewNews.external_id }}</code></span>
+                                · iframe sandboxed (no script execution) for safety
+                            </p>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- ===== MT5 News detail popup (styled like MetaTrader's terminal calendar) ===== -->
                 <div v-if="selectedNews"
@@ -781,26 +863,62 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                         </div>
 
                         <div class="space-y-4 p-5">
-                            <!-- Values grid -->
+                            <!-- Values grid (with unit suffix when MT5 provides one) -->
                             <dl class="grid grid-cols-3 gap-3">
                                 <div class="rounded-md bg-[#2d2d30] p-3">
                                     <dt class="text-xs font-bold uppercase tracking-wider text-gray-400">Forecast</dt>
-                                    <dd class="mt-1 font-mono text-lg font-bold text-blue-300">{{ selectedNews.forecast || '—' }}</dd>
+                                    <dd class="mt-1 font-mono text-lg font-bold text-blue-300">
+                                        {{ selectedNews.forecast || '—' }}
+                                        <span v-if="selectedNews.forecast && selectedNews.unit" class="text-xs font-normal text-gray-400">{{ selectedNews.unit }}</span>
+                                    </dd>
                                 </div>
                                 <div class="rounded-md bg-[#2d2d30] p-3">
                                     <dt class="text-xs font-bold uppercase tracking-wider text-gray-400">Previous</dt>
-                                    <dd class="mt-1 font-mono text-lg font-bold text-gray-300">{{ selectedNews.previous || '—' }}</dd>
+                                    <dd class="mt-1 font-mono text-lg font-bold text-gray-300">
+                                        {{ selectedNews.previous || '—' }}
+                                        <span v-if="selectedNews.previous && selectedNews.unit" class="text-xs font-normal text-gray-400">{{ selectedNews.unit }}</span>
+                                    </dd>
                                 </div>
                                 <div class="rounded-md bg-[#2d2d30] p-3">
                                     <dt class="text-xs font-bold uppercase tracking-wider text-gray-400">Actual</dt>
                                     <dd class="mt-1 font-mono text-lg font-bold"
                                         :class="selectedNews.actual ? 'text-yellow-300' : 'text-gray-500'">
                                         {{ selectedNews.actual || '—' }}
+                                        <span v-if="selectedNews.actual && selectedNews.unit" class="text-xs font-normal text-gray-400">{{ selectedNews.unit }}</span>
                                     </dd>
                                 </div>
                             </dl>
 
-                            <!-- Additional MT5 calendar context (when present) -->
+                            <!-- MT5 calendar metadata strip -->
+                            <div v-if="selectedNews.sector || selectedNews.frequency || selectedNews.event_type" class="flex flex-wrap gap-2">
+                                <span v-if="selectedNews.sector"
+                                      class="rounded-md bg-blue-900/40 px-3 py-1 text-xs font-bold text-blue-200">
+                                    📊 {{ selectedNews.sector }}
+                                </span>
+                                <span v-if="selectedNews.frequency"
+                                      class="rounded-md bg-purple-900/40 px-3 py-1 text-xs font-bold text-purple-200">
+                                    🔄 {{ selectedNews.frequency }}
+                                </span>
+                                <span v-if="selectedNews.event_type"
+                                      class="rounded-md bg-emerald-900/40 px-3 py-1 text-xs font-bold text-emerald-200">
+                                    🏷️ {{ selectedNews.event_type }}
+                                </span>
+                                <span v-if="selectedNews.unit"
+                                      class="rounded-md bg-amber-900/40 px-3 py-1 text-xs font-bold text-amber-200">
+                                    📏 unit: {{ selectedNews.unit }}
+                                </span>
+                            </div>
+
+                            <!-- Source URL link (when MT5 provides one — biggest content win) -->
+                            <a v-if="selectedNews.source_url"
+                               :href="selectedNews.source_url"
+                               target="_blank" rel="noopener"
+                               class="flex items-center justify-between rounded-md border border-blue-500/40 bg-blue-900/30 p-3 text-sm font-bold text-blue-200 transition hover:bg-blue-900/60 hover:text-blue-100">
+                                <span>🔗 Open official source page</span>
+                                <span class="font-mono text-xs text-blue-300">{{ selectedNews.source_url }}</span>
+                            </a>
+
+                            <!-- Enrichment context (ForexFactory-style) -->
                             <div v-if="selectedNews.measures" class="rounded-md bg-[#2d2d30] p-3">
                                 <p class="text-xs font-bold uppercase tracking-wider text-gray-400">What it measures</p>
                                 <p class="mt-1 text-sm leading-relaxed text-gray-200" v-html="selectedNews.measures"></p>
@@ -818,14 +936,17 @@ const tradingViewSymbol = computed(() => `FX:${props.symbol}`);
                                 <p class="mt-1 text-sm leading-relaxed text-gray-200" v-html="selectedNews.notes"></p>
                             </div>
 
-                            <p v-if="!selectedNews.measures && !selectedNews.usual_effect && !selectedNews.traders_care && !selectedNews.notes"
+                            <p v-if="!selectedNews.measures && !selectedNews.usual_effect && !selectedNews.traders_care && !selectedNews.notes && !selectedNews.source_url && !selectedNews.sector"
                                class="rounded-md bg-[#2d2d30] p-3 text-center text-sm italic text-gray-400">
                                 No additional context provided by the MT5 calendar feed for this event.
+                                <br>
+                                <span class="text-xs">(Re-attach EA v3.70+ to pull richer metadata.)</span>
                             </p>
 
                             <p class="text-right text-xs text-gray-500">
                                 Source: MetaTrader 5 Economic Calendar
                                 <span v-if="selectedNews.mt5_event_id">· event #{{ selectedNews.mt5_event_id }}</span>
+                                <span v-if="selectedNews.currency"> · {{ selectedNews.currency }}</span>
                             </p>
                         </div>
                     </div>

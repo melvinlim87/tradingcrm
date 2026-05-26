@@ -27,6 +27,10 @@ Route::middleware('verify.ea')->prefix('ea')->group(function () {
     // so the EA is the only conduit). Backend upserts into forex_news with source='mt5'.
     Route::post('/news', [EaNewsController::class, 'push']);
 
+    // EA pushes MT5 BROKER news (Trading Central style, HTML bodies)
+    // — those that appear in MT5's News tab. Source = 'mt5_broker_news'.
+    Route::post('/news/broker', [EaNewsController::class, 'pushBrokerNews']);
+
     // On-demand MT5 news fetch — admin triggers from UI, EA polls + fulfills.
     Route::get('/news-requests/pending', [EaNewsController::class, 'pending']);
     Route::post('/news-requests/{id}/complete', [EaNewsController::class, 'complete']);
