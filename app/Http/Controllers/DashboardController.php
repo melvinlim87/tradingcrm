@@ -39,11 +39,24 @@ class DashboardController extends Controller
         // ── BATCH-AGGREGATE profit series for all accounts in one SQL ─────
         $profitSeriesByAcc = $this->aggregateProfitSeriesByAccount($accountIds, $historyCutoff);
 
-        $accounts = $accounts->map(function (Mt5Account $acc) use ($openByAcc, $pendingByAcc, $historyByAcc, $profitSeriesByAcc) {
+        // ── BATCH-AGGREGATE all-time closed profit per account (one SQL) ──
+        // Used as the ROI numerator (closed_profit / capital_base).
+        // No date cutoff: ROI is a lifetime metric.
+        $closedProfitByAcc = OrderHistory::whereIn('mt5_account_id', $accountIds)
+            ->selectRaw('mt5_account_id, SUM(pnl) AS total_pnl')
+            ->groupBy('mt5_account_id')
+            ->pluck('total_pnl', 'mt5_account_id')
+            ->map(fn ($v) => (float) $v)
+            ->all();
+
+        $accounts = $accounts->map(function (Mt5Account $acc) use ($openByAcc, $pendingByAcc, $historyByAcc, $profitSeriesByAcc, $closedProfitByAcc) {
             $acc->setRelation('openOrders',     $openByAcc[$acc->id]    ?? collect());
             $acc->setRelation('pendingOrders',  $pendingByAcc[$acc->id] ?? collect());
             $acc->setRelation('historyOrders',  $historyByAcc[$acc->id] ?? collect());
             $acc->setAttribute('profit_series', $profitSeriesByAcc[$acc->id] ?? []);
+            // Inject closed_profit_total so Mt5Account::roi_pct accessor
+            // doesn't need to re-query OrderHistory per account.
+            $acc->setAttribute('closed_profit_total', $closedProfitByAcc[$acc->id] ?? 0.0);
             return $acc;
         });
 
@@ -67,11 +80,12 @@ class DashboardController extends Controller
         $overallProfitSeries = $this->mergeAccountProfitSeries($profitSeriesByAcc);
 
         // Overall capital base = sum of each account's capital_base
-        // (net_deposits if EA pushes it, else initial_balance fallback).
-        // Overall ROI % = (totalEquity - totalCapitalBase) / totalCapitalBase * 100
+        // (total_deposits if EA pushes it, else initial_balance fallback).
+        // Overall ROI % = total closed profit / total capital base * 100
+        // — i.e. realised return on deposited capital, ignoring floating PnL.
         $totalCapitalBase = (float) $accounts->sum(fn ($a) => (float) ($a->capital_base ?? 0));
         $overallRoiPct    = $totalCapitalBase > 0
-            ? round((($totalEquity - $totalCapitalBase) / $totalCapitalBase) * 100, 2)
+            ? round(($closedProfit / $totalCapitalBase) * 100, 2)
             : null;
 
         $overall = [

@@ -317,7 +317,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         </div>
                         <div class="bg-white px-6 py-3">
                             <p class="text-xs font-bold uppercase tracking-wide text-black">ROI %
-                                <span class="font-normal" :title="`(Equity − Capital Base) / Capital Base · base = ${fmt(overall.capital_base)}`">ⓘ</span>
+                                <span class="font-normal" :title="`Closed Profit / Total Deposits · deposits = ${fmt(overall.capital_base)} · realised return, ignores floating PnL`">ⓘ</span>
                             </p>
                             <p class="mt-1 font-mono text-lg font-bold"
                                :class="overall.roi_pct == null ? 'text-gray-400' : pctClass(overall.roi_pct)">
@@ -529,7 +529,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 </div>
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black"
-                                       :title="`(Equity − Capital Base) / Capital Base · base = ${fmt(acc.capital_base)} (${acc.net_deposits != null ? 'net deposits' : 'initial balance'})`">
+                                       :title="`Closed Profit / Total Deposits · profit=${fmt(acc.closed_profit_total)} · deposits=${fmt(acc.capital_base)} (${acc.total_deposits != null && Number(acc.total_deposits) > 0 ? 'EA-reported' : 'initial balance fallback'}) · realised, ignores floating PnL`">
                                        ROI %
                                     </p>
                                     <p class="mt-1 font-mono text-base font-bold"

@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+// (OrderHistory used by lazy fallback in roi_pct accessor)
+use App\Models\OrderHistory;
 
 class Mt5Account extends Model
 {
@@ -87,16 +89,23 @@ class Mt5Account extends Model
     }
 
     /**
-     * Capital base used for ROI calc — prefer EA-reported net_deposits, else
-     * fall back to initial_balance (first EA-ping balance). Returns null if
-     * we have neither (don't divide by zero).
+     * Capital base used as the ROI denominator — prefer total_deposits
+     * (gross money the user put in, from EA's DEAL_TYPE_BALANCE scan),
+     * else fall back to initial_balance (first EA-ping balance). Returns
+     * null if we have neither, to avoid divide-by-zero.
+     *
+     * We deliberately use TOTAL deposits (not net_deposits) here, because:
+     *   - "What return have my trades made on the money I put in?" is the
+     *     intuitive question.
+     *   - Withdrawals are typically REALISED profit being taken out, so
+     *     subtracting them inflates ROI artificially.
      */
     protected function capitalBase(): Attribute
     {
         return Attribute::make(
             get: function () {
-                if ($this->net_deposits !== null && (float) $this->net_deposits > 0) {
-                    return (float) $this->net_deposits;
+                if ($this->total_deposits !== null && (float) $this->total_deposits > 0) {
+                    return (float) $this->total_deposits;
                 }
                 if ($this->initial_balance !== null && (float) $this->initial_balance > 0) {
                     return (float) $this->initial_balance;
@@ -107,8 +116,16 @@ class Mt5Account extends Model
     }
 
     /**
-     * ROI % = (equity - capital_base) / capital_base * 100
-     * null if capital_base unknown.
+     * ROI % = closed_profit_total / capital_base * 100
+     *
+     * `closed_profit_total` is set by DashboardController (sum of all
+     * orders_history.pnl for this account). If not pre-set, falls back
+     * to a direct query so accessor still works in tinker / API.
+     *
+     * Returns null when:
+     *   - capital_base is unknown
+     *   - we have no closed trades AND withdrawals haven't been made
+     *     (a brand-new account → don't show misleading 0%)
      */
     protected function roiPct(): Attribute
     {
@@ -116,7 +133,13 @@ class Mt5Account extends Model
             get: function () {
                 $base = $this->capital_base;
                 if ($base === null || $base <= 0) return null;
-                return round((((float) $this->equity - $base) / $base) * 100, 2);
+
+                // Use controller-injected value if present (fast batch query);
+                // otherwise hit DB lazily (slow but correct for ad-hoc use).
+                $closedProfit = $this->attributes['closed_profit_total']
+                    ?? OrderHistory::where('mt5_account_id', $this->id)->sum('pnl');
+
+                return round(((float) $closedProfit / $base) * 100, 2);
             },
         );
     }
