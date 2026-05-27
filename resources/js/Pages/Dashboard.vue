@@ -288,8 +288,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         </div>
                     </div>
 
-                    <!-- Drawdown summary row -->
-                    <div class="border-t border-gray-200 grid grid-cols-1 gap-px bg-gray-200 md:grid-cols-3">
+                    <!-- Drawdown + ROI summary row -->
+                    <div class="border-t border-gray-200 grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-4">
                         <div class="bg-white px-6 py-3">
                             <p class="text-xs font-bold uppercase tracking-wide text-black">Current DD%</p>
                             <p class="mt-1 font-mono text-lg font-bold"
@@ -313,6 +313,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                             <p class="mt-1 font-mono text-lg font-bold"
                                :class="overall.max_eq_drawdown_pct > 0 ? 'text-red-600' : 'text-black'">
                                 {{ fmt(overall.max_eq_drawdown_pct, 2) }}%
+                            </p>
+                        </div>
+                        <div class="bg-white px-6 py-3">
+                            <p class="text-xs font-bold uppercase tracking-wide text-black">ROI %
+                                <span class="font-normal" :title="`(Equity − Capital Base) / Capital Base · base = ${fmt(overall.capital_base)}`">ⓘ</span>
+                            </p>
+                            <p class="mt-1 font-mono text-lg font-bold"
+                               :class="overall.roi_pct == null ? 'text-gray-400' : pctClass(overall.roi_pct)">
+                                <template v-if="overall.roi_pct == null">—</template>
+                                <template v-else>{{ overall.roi_pct >= 0 ? '+' : '' }}{{ fmt(overall.roi_pct, 2) }}%</template>
                             </p>
                         </div>
                     </div>
@@ -474,8 +484,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 <PortfolioChart :series="acc.profit_series || []" :label="`#${acc.account_number} P&L`" :height="220" />
                             </div>
 
-                            <!-- Metric grid: 7 cards now (added Max ABS / Max EQ) -->
-                            <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-7">
+                            <!-- Metric grid: 8 cards (Balance / Equity / Float% / Float$ / DD% / Max ABS / Max EQ / ROI) -->
+                            <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-8">
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black">Balance</p>
                                     <p class="mt-1 font-mono text-base font-bold text-black">{{ fmt(acc.balance) }}</p>
@@ -515,6 +525,17 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                     <p class="mt-1 font-mono text-base font-bold"
                                        :class="Number(acc.max_eq_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
                                         {{ fmt(acc.max_eq_drawdown_pct, 2) }}%
+                                    </p>
+                                </div>
+                                <div class="bg-white px-4 py-3">
+                                    <p class="text-xs font-bold uppercase text-black"
+                                       :title="`(Equity − Capital Base) / Capital Base · base = ${fmt(acc.capital_base)} (${acc.net_deposits != null ? 'net deposits' : 'initial balance'})`">
+                                       ROI %
+                                    </p>
+                                    <p class="mt-1 font-mono text-base font-bold"
+                                       :class="acc.roi_pct == null ? 'text-gray-400' : pctClass(acc.roi_pct)">
+                                        <template v-if="acc.roi_pct == null">—</template>
+                                        <template v-else>{{ acc.roi_pct >= 0 ? '+' : '' }}{{ fmt(acc.roi_pct, 2) }}%</template>
                                     </p>
                                 </div>
                             </div>

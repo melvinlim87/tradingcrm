@@ -101,6 +101,13 @@ class EaPushController extends Controller
             : 0;
         $maxEqDdPct = max((float) $account->max_eq_drawdown_pct, $currentEqDdPct);
 
+        // EA pushes total_deposits / total_withdrawals / net_deposits (v3.73+).
+        // If absent (older EA), persist null/zero — Mt5Account::capital_base
+        // falls back to initial_balance for ROI calc.
+        $totalDeposits    = array_key_exists('total_deposits',    $a) ? (float) $a['total_deposits']    : null;
+        $totalWithdrawals = array_key_exists('total_withdrawals', $a) ? (float) $a['total_withdrawals'] : null;
+        $netDeposits      = array_key_exists('net_deposits',      $a) ? (float) $a['net_deposits']      : null;
+
         $account->update([
             'broker'               => $a['broker'] ?? $account->broker,
             'server'               => $a['server'] ?? $account->server,
@@ -110,6 +117,9 @@ class EaPushController extends Controller
             'balance'              => $balance,
             'equity'               => $equity,
             'initial_balance'      => $initialBalance,
+            'total_deposits'       => $totalDeposits    ?? $account->total_deposits    ?? 0,
+            'total_withdrawals'    => $totalWithdrawals ?? $account->total_withdrawals ?? 0,
+            'net_deposits'         => $netDeposits      ?? $account->net_deposits,
             'peak_equity'          => $peakEquity,
             'margin'               => (float) ($a['margin'] ?? 0),
             'free_margin'          => (float) ($a['free_margin'] ?? 0),

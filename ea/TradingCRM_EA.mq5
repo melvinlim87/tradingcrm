@@ -16,10 +16,10 @@
 //|         add: https://quant.lazetrader.com                         |
 //+------------------------------------------------------------------+
 #property copyright "QuantATM"
-#property version   "3.72"
+#property version   "3.73"
 #property strict
 
-#define EA_VERSION "3.72"
+#define EA_VERSION "3.73"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -574,6 +574,30 @@ void ExportRiskData()
       }
    }
 
+   //------------------------------------------------------------------
+   // Scan ALL history for DEAL_TYPE_BALANCE deals
+   //   -> positive profit  = deposit
+   //   -> negative profit  = withdrawal
+   // Sums power the backend ROI % column.
+   //------------------------------------------------------------------
+   double totalDeposits    = 0.0;
+   double totalWithdrawals = 0.0;
+   if(HistorySelect(0, TimeCurrent()))
+   {
+      int dealsAll = HistoryDealsTotal();
+      for(int di = 0; di < dealsAll; di++)
+      {
+         ulong dt = HistoryDealGetTicket(di);
+         if(dt == 0) continue;
+         long deal_type = HistoryDealGetInteger(dt, DEAL_TYPE);
+         if(deal_type != DEAL_TYPE_BALANCE) continue;   // skip non-deposit deals
+         double dp = HistoryDealGetDouble(dt, DEAL_PROFIT);
+         if(dp >= 0) totalDeposits    += dp;
+         else        totalWithdrawals += -dp;           // store as positive magnitude
+      }
+   }
+   double netDeposits = totalDeposits - totalWithdrawals;
+
    string json = "{";
    json += "\"account\":{";
    json += "\"number\":" + (string)accountNum + ",";
@@ -587,7 +611,10 @@ void ExportRiskData()
    json += "\"margin\":" + DoubleToString(margin, 2) + ",";
    json += "\"free_margin\":" + DoubleToString(freeMargin, 2) + ",";
    json += "\"margin_level\":" + DoubleToString(marginLevel, 2) + ",";
-   json += "\"drawdown\":" + DoubleToString(drawdown, 2);
+   json += "\"drawdown\":" + DoubleToString(drawdown, 2) + ",";
+   json += "\"total_deposits\":"    + DoubleToString(totalDeposits,    2) + ",";
+   json += "\"total_withdrawals\":" + DoubleToString(totalWithdrawals, 2) + ",";
+   json += "\"net_deposits\":"      + DoubleToString(netDeposits,      2);
    json += "},";
 
    json += "\"performance\":{";

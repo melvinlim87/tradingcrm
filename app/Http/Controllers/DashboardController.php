@@ -66,6 +66,14 @@ class DashboardController extends Controller
         // Overall profit curve = sum daily PnLs across all visible accounts
         $overallProfitSeries = $this->mergeAccountProfitSeries($profitSeriesByAcc);
 
+        // Overall capital base = sum of each account's capital_base
+        // (net_deposits if EA pushes it, else initial_balance fallback).
+        // Overall ROI % = (totalEquity - totalCapitalBase) / totalCapitalBase * 100
+        $totalCapitalBase = (float) $accounts->sum(fn ($a) => (float) ($a->capital_base ?? 0));
+        $overallRoiPct    = $totalCapitalBase > 0
+            ? round((($totalEquity - $totalCapitalBase) / $totalCapitalBase) * 100, 2)
+            : null;
+
         $overall = [
             'account_count'        => $accounts->count(),
             'balance'              => $totalBalance,
@@ -78,6 +86,8 @@ class DashboardController extends Controller
             'max_drawdown'         => $maxDrawdown,
             'max_abs_drawdown_pct' => $maxAbsDdPct,
             'max_eq_drawdown_pct'  => $maxEqDdPct,
+            'capital_base'         => $totalCapitalBase,
+            'roi_pct'              => $overallRoiPct,
             'profit_series'        => $overallProfitSeries,
         ];
 

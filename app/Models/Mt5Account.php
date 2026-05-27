@@ -24,6 +24,9 @@ class Mt5Account extends Model
         'balance',
         'equity',
         'initial_balance',
+        'total_deposits',
+        'total_withdrawals',
+        'net_deposits',
         'peak_equity',
         'margin',
         'free_margin',
@@ -38,12 +41,20 @@ class Mt5Account extends Model
         'created_by',
     ];
 
+    /**
+     * Auto-include computed roi_pct in every serialization (Dashboard, JSON, etc.)
+     */
+    protected $appends = ['roi_pct', 'capital_base'];
+
     protected $casts = [
         'account_number' => 'integer',
         'leverage' => 'integer',
         'balance' => 'decimal:2',
         'equity' => 'decimal:2',
         'initial_balance' => 'decimal:2',
+        'total_deposits' => 'decimal:2',
+        'total_withdrawals' => 'decimal:2',
+        'net_deposits' => 'decimal:2',
         'peak_equity' => 'decimal:2',
         'margin' => 'decimal:2',
         'free_margin' => 'decimal:2',
@@ -72,6 +83,41 @@ class Mt5Account extends Model
             get: fn () => $this->account_name
                 ? "{$this->account_name} (#{$this->account_number})"
                 : "#{$this->account_number}",
+        );
+    }
+
+    /**
+     * Capital base used for ROI calc — prefer EA-reported net_deposits, else
+     * fall back to initial_balance (first EA-ping balance). Returns null if
+     * we have neither (don't divide by zero).
+     */
+    protected function capitalBase(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                if ($this->net_deposits !== null && (float) $this->net_deposits > 0) {
+                    return (float) $this->net_deposits;
+                }
+                if ($this->initial_balance !== null && (float) $this->initial_balance > 0) {
+                    return (float) $this->initial_balance;
+                }
+                return null;
+            },
+        );
+    }
+
+    /**
+     * ROI % = (equity - capital_base) / capital_base * 100
+     * null if capital_base unknown.
+     */
+    protected function roiPct(): Attribute
+    {
+        return Attribute::make(
+            get: function () {
+                $base = $this->capital_base;
+                if ($base === null || $base <= 0) return null;
+                return round((((float) $this->equity - $base) / $base) * 100, 2);
+            },
         );
     }
 
