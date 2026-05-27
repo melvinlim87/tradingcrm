@@ -15,107 +15,96 @@
 //|   MT5 → Tools → Options → Expert Advisors → Allow WebRequest     |
 //|         add: https://quant.lazetrader.com                         |
 //+------------------------------------------------------------------+
-#property copyright "TradingCRM"
-#property version   "3.71"
+#property copyright "QuantATM"
+#property version   "3.72"
 #property strict
 
-#define EA_VERSION "3.71"
+#define EA_VERSION "3.72"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
 
-//=== UNIFIED BACKEND ============================================================
-input group           "=== BACKEND ==="
-input string  InpBackendBase  = "https://quant.lazetrader.com/api/ea"; // Base URL, no trailing /
-input string  InpEaToken      = "CHANGE_ME_TO_64_CHAR_RANDOM_STRING";    // Matches .env EA_PUSH_TOKEN
+//=============================================================================
+// HARDCODED CONFIGURATION — NOT USER-EDITABLE
+//
+// All values below are deliberately NOT declared with `input`, so MetaTrader
+// will NOT show them in the EA properties dialog when the user attaches the
+// EA to a chart. To change any value, edit this file, recompile in MetaEditor
+// (F7), then reattach the EA. This is intentional: end users should not be
+// able to modify the backend URL, auth token, or thresholds.
+//=============================================================================
 
-//=== TIMERS =====================================================================
-input group           "=== TIMERS ==="
-input int     InpSignalInterval     = 600;   // GET /signals every N sec (0 = disable)
-input int     InpRiskPushInterval   = 10;    // POST /push every N sec
-input int     InpChartPollInterval  = 10;    // GET /chart-requests/pending every N sec
-input int     InpNewsRefreshSec     = 60;    // On-chart News panel refresh (0 = disable)
-input int     InpNewsPushInterval   = 900;   // POST MT5 calendar → backend every N sec (0 = disable)
-input int     InpNewsPushWindowH    = 168;   // How far ahead to look (168h = 7d)
-input int     InpNewsPushBackH      = 168;   // How far back to look (168h = 7d)
-input int     InpBrokerNewsInterval = 300;   // Scan MQL5/Files/news/*.htm → POST every N sec (0=off)
-input string  InpBrokerNewsFolder   = "news";// Subfolder under MQL5/Files where broker drops .htm
+//=== BACKEND ==================================================================
+const string  InpBackendBase  = "https://quant.lazetrader.com/api/ea"; // Base URL, no trailing /
+const string  InpEaToken      = "CHANGE_ME_TO_64_CHAR_RANDOM_STRING";    // Must match .env EA_PUSH_TOKEN
 
-//=== NEWS PANEL (on-chart) ======================================================
-// Occupies the empty 6th cell of CDashboard (row 2, column 3).
-// Visual style is locked to Dashboard.mqh — same bg/border/header colors,
-// same fonts (Segoe UI Semibold header + Consolas body), same 18 px row pitch.
-// Defaults assume DashboardX=20, DashboardY=30 (X = 20+400, Y = 30+228).
-input group           "=== NEWS PANEL ==="
-input bool    InpShowNewsPanel     = true;
-input int     InpNewsPanelX        = 420;       // = DashboardX + DASH_COL_W*2
-input int     InpNewsPanelY        = 258;       // = DashboardY + 228 (row 2 top)
-input int     InpNewsPanelW        = 200;       // = DASH_COL_W
-input int     InpNewsPanelH        = 232;       // = DASH_HEIGHT - 228
-input int     InpNewsMaxLines      = 9;         // Matches LP/Exec column row count
-input bool    InpIncludeMt5Calendar = true;     // Pull MT5 native calendar too
+//=== TIMERS ===================================================================
+const int     InpSignalInterval     = 600;   // GET /signals every N sec (0 = disable)
+const int     InpRiskPushInterval   = 10;    // POST /push every N sec
+const int     InpChartPollInterval  = 10;    // GET /chart-requests/pending every N sec
+const int     InpNewsRefreshSec     = 60;    // On-chart News panel refresh (0 = disable)
+const int     InpNewsPushInterval   = 900;   // POST MT5 calendar → backend every N sec (0 = disable)
+const int     InpNewsPushWindowH    = 168;   // How far ahead to look (168h = 7d)
+const int     InpNewsPushBackH      = 168;   // How far back to look (168h = 7d)
+const int     InpBrokerNewsInterval = 300;   // Scan MQL5/Files/news/*.htm → POST every N sec (0=off)
+const string  InpBrokerNewsFolder   = "news";// Subfolder under MQL5/Files where broker drops .htm
 
-//=== SIGNAL TRADING (from v2) ===================================================
-input group           "=== SIGNAL TRADING ==="
-input int     InpMagicNumber  = 112;
-input double  InpLots         = 0.1;
+//=== NEWS PANEL (on-chart) ====================================================
+const bool    InpShowNewsPanel     = true;
+const int     InpNewsPanelX        = 420;
+const int     InpNewsPanelY        = 258;
+const int     InpNewsPanelW        = 200;
+const int     InpNewsPanelH        = 232;
+const int     InpNewsMaxLines      = 9;
+const bool    InpIncludeMt5Calendar = true;
 
-//=== RISK MONITOR ===============================================================
-input group           "=== RISK MONITOR ==="
-input int     InpRiskHistoryLimit  = 500;     // History deals per push
-input double  AccountWarningPercent = 7.0;
-input double  AccountDangerPercent  = 15.0;
-input double  PairWarningPercent    = 5.0;
-input double  PairDangerPercent     = 7.0;
-input int     LayerWarningCount     = 5;
-input int     LayerDangerCount      = 7;
+//=== SIGNAL TRADING ===========================================================
+const int     InpMagicNumber  = 112;
+const double  InpLots         = 0.1;
 
-//=== CHART EXPORTER =============================================================
-input group           "=== CHART EXPORTER ==="
-input int     InpChartWidth        = 1920;
-input int     InpChartHeight       = 1080;
-input int     InpBarsToShow        = 200;
-input int     InpRenderDelayMs     = 1500;
-input int     InpMAPeriod          = 50;
-input ENUM_MA_METHOD InpMAMethod   = MODE_SMA;
-input int     InpMACDFast          = 12;
-input int     InpMACDSlow          = 26;
-input int     InpMACDSignal        = 9;
-input int     InpRSIPeriod         = 14;
+//=== RISK MONITOR =============================================================
+const int     InpRiskHistoryLimit  = 500;
+const double  AccountWarningPercent = 7.0;
+const double  AccountDangerPercent  = 15.0;
+const double  PairWarningPercent    = 5.0;
+const double  PairDangerPercent     = 7.0;
+const int     LayerWarningCount     = 5;
+const int     LayerDangerCount      = 7;
 
-//=== GENERAL ====================================================================
-input group           "=== GENERAL ==="
-input string  InpMonitoredSymbols  = "";     // Symbols (empty = Market Watch)
-input bool    InpShowDashboard     = true;
-input int     InpDashboardX        = 20;
-input int     InpDashboardY        = 30;
+//=== CHART EXPORTER ===========================================================
+const int             InpChartWidth    = 1920;
+const int             InpChartHeight   = 1080;
+const int             InpBarsToShow    = 200;
+const int             InpRenderDelayMs = 1500;
+const int             InpMAPeriod      = 50;
+const ENUM_MA_METHOD  InpMAMethod      = MODE_SMA;
+const int             InpMACDFast      = 12;
+const int             InpMACDSlow      = 26;
+const int             InpMACDSignal    = 9;
+const int             InpRSIPeriod     = 14;
 
-input group           "=== SLIPPAGE ==="
-input double  InpSlippageAlertPoints = 5.0;
+//=== GENERAL ==================================================================
+const string  InpMonitoredSymbols  = "";     // empty = Market Watch
+const bool    InpShowDashboard     = true;
+const int     InpDashboardX        = 20;
+const int     InpDashboardY        = 30;
 
-input group           "=== SPREAD ==="
-input double  InpSpreadMultiplier  = 3.0;
-input int     InpSpreadSampleSec   = 5;
-
-input group           "=== RISK MANAGEMENT ==="
-input double  InpMaxMarginUtil    = 80.0;
-input double  InpMaxDailyDrawdown = 5.0;
-input double  InpMaxTotalExposure = 10.0;
-input int     InpMaxPositions     = 10;
-
-input group           "=== LATENCY ==="
-input int     InpLatencyAlertMs   = 500;
-
-input group           "=== LOGGING ==="
-input bool    InpEnableCSVLog     = true;
-input int     InpRiskLogInterval  = 30;
-input int     InpLPReportInterval = 3600;
-
-input group           "=== ALERTS ==="
-input bool    InpPushNotifications = false;
-input bool    InpEmailAlerts       = false;
-input bool    InpSoundAlerts       = true;
-input int     InpAlertCooldown     = 60;
+//=== SLIPPAGE / SPREAD / RISK / LATENCY / LOGGING / ALERTS ===================
+const double  InpSlippageAlertPoints = 5.0;
+const double  InpSpreadMultiplier    = 3.0;
+const int     InpSpreadSampleSec     = 5;
+const double  InpMaxMarginUtil       = 80.0;
+const double  InpMaxDailyDrawdown    = 5.0;
+const double  InpMaxTotalExposure    = 10.0;
+const int     InpMaxPositions        = 10;
+const int     InpLatencyAlertMs      = 500;
+const bool    InpEnableCSVLog        = true;
+const int     InpRiskLogInterval     = 30;
+const int     InpLPReportInterval    = 3600;
+const bool    InpPushNotifications   = false;
+const bool    InpEmailAlerts         = false;
+const bool    InpSoundAlerts         = true;
+const int     InpAlertCooldown       = 60;
 
 //=== Module Instances ===========================================================
 CCSVLogger        g_logger;
@@ -171,7 +160,7 @@ string EndpointUrl(string suffix)
 int OnInit()
 {
    Print("==================================================");
-   PrintFormat("  TradingCRM EA v%s (combined)", EA_VERSION);
+   PrintFormat("  QuantATM EA v%s (combined)", EA_VERSION);
    Print("  Build flags: ResolveBrokerSymbol=ON  NewsPanel=ON");
    Print("==================================================");
    PrintFormat("  Backend: %s", InpBackendBase);
@@ -180,7 +169,7 @@ int OnInit()
                InpNewsRefreshSec, InpNewsPushInterval, InpBrokerNewsInterval);
    PrintFormat("  Broker news folder: MQL5/Files/%s/*.htm", InpBrokerNewsFolder);
 
-   if(!g_logger.Init(InpEnableCSVLog, "TradingCRM"))
+   if(!g_logger.Init(InpEnableCSVLog, "QuantATM"))
    {
       Print("[ERROR] CSV Logger initialization failed");
       return INIT_FAILED;
@@ -231,8 +220,8 @@ int OnInit()
 
    EventSetTimer(1);
 
-   Print("[TradingCRM] Init complete");
-   g_alert.FireAlert(ALERT_INFO, ALERT_CAT_GENERAL, "", "TradingCRM EA started");
+   Print("[QuantATM] Init complete");
+   g_alert.FireAlert(ALERT_INFO, ALERT_CAT_GENERAL, "", "QuantATM EA started");
 
    return(INIT_SUCCEEDED);
 }
@@ -245,7 +234,7 @@ void OnDeinit(const int reason)
    g_spread.Deinit();
    g_logger.Deinit();
    NewsPanelDestroy();
-   Print("[TradingCRM] Shutdown. Reason: ", reason);
+   Print("[QuantATM] Shutdown. Reason: ", reason);
 }
 
 void OnTick()
@@ -640,7 +629,7 @@ void SendRiskDataPost(string jsonPayload)
    ArrayResize(postData, ArraySize(postData) - 1);
    int code = WebRequest("POST", url, headers, 5000, postData, result, resultHeaders);
    if(code != 200 && code != -1)
-      PrintFormat("[TradingCRM] Push HTTP %d", code);
+      PrintFormat("[QuantATM] Push HTTP %d", code);
 }
 
 // =========================================================================
@@ -1069,7 +1058,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    if(id == CHARTEVENT_KEYDOWN && lparam == 'D')
    {
       g_dashboard.SetVisible(!g_dashboard.IsVisible());
-      PrintFormat("[TradingCRM] Dashboard %s",
+      PrintFormat("[QuantATM] Dashboard %s",
          g_dashboard.IsVisible() ? "shown" : "hidden");
    }
    if(id == CHARTEVENT_KEYDOWN && lparam == 'N')

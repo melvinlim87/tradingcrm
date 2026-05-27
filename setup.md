@@ -1,4 +1,4 @@
-# TradingCRM — Windows Server 环境安装指引
+# QuantATM — Windows Server 环境安装指引
 
 > 目标:在你 16GB RAM 的 Windows Server VPS 上,搭好 **Nginx + PHP 8.3 + MySQL 8 + Laravel 11 + Queue Worker + Scheduler** 的完整生产环境。
 
@@ -30,7 +30,7 @@ netstat -ano | findstr ":80 "
 netstat -ano | findstr ":443 "
 ```
 
-> 如果将来还要用 IIS 跑其他东西,可让 Laragon 走 8080/8443,但建议先专注 TradingCRM。
+> 如果将来还要用 IIS 跑其他东西,可让 Laragon 走 8080/8443,但建议先专注 QuantATM。
 
 ---
 
@@ -155,7 +155,7 @@ Laragon **auto virtual hosts** 会自动把 `C:\laragon\www\tradingcrm\public` �
 ### 步骤 7:配置 Laravel `.env`
 
 ```ini
-APP_NAME=TradingCRM
+APP_NAME=QuantATM
 APP_ENV=production
 APP_DEBUG=false
 APP_URL=https://yourdomain.com
@@ -206,7 +206,7 @@ php artisan migrate
 #### 8.2 注册 Queue Worker
 PowerShell (Admin):
 ```powershell
-nssm install TradingCRM-Queue
+nssm install QuantATM-Queue
 ```
 
 弹窗里填:
@@ -215,18 +215,18 @@ nssm install TradingCRM-Queue
 | Application | Path | `C:\laragon\bin\php\php-8.3.x\php.exe` |
 | Application | Startup directory | `C:\laragon\www\tradingcrm` |
 | Application | Arguments | `artisan queue:work --tries=3 --timeout=300 --sleep=3` |
-| Details | Display name | `TradingCRM Queue Worker` |
+| Details | Display name | `QuantATM Queue Worker` |
 | Details | Startup type | Automatic |
 | I/O | Output (stdout) | `C:\laragon\www\tradingcrm\storage\logs\queue-stdout.log` |
 | I/O | Error (stderr) | `C:\laragon\www\tradingcrm\storage\logs\queue-stderr.log` |
 
 启动:
 ```powershell
-nssm start TradingCRM-Queue
-nssm status TradingCRM-Queue
+nssm start QuantATM-Queue
+nssm status QuantATM-Queue
 ```
 
-> ⚠️ 之后改 code 要重启 worker:`nssm restart TradingCRM-Queue`
+> ⚠️ 之后改 code 要重启 worker:`nssm restart QuantATM-Queue`
 
 ---
 
@@ -236,7 +236,7 @@ nssm status TradingCRM-Queue
 1. Win+R → `taskschd.msc`
 2. 右侧 **Create Task...** (不是 Basic Task)
 3. **General:**
-   - Name: `TradingCRM Scheduler`
+   - Name: `QuantATM Scheduler`
    - 勾 "Run whether user is logged on or not"
    - 勾 "Run with highest privileges"
 4. **Triggers:** New
@@ -256,7 +256,7 @@ nssm status TradingCRM-Queue
 #### 9.2 测试
 PowerShell:
 ```powershell
-schtasks /run /tn "TradingCRM Scheduler"
+schtasks /run /tn "QuantATM Scheduler"
 ```
 
 查看 Laravel scheduler 是否触发:`storage\logs\laravel.log`
@@ -421,7 +421,7 @@ Get-ChildItem $backupDir -Filter "*.sql" |
    ```sql
    ALTER USER 'tradingcrm'@'localhost' IDENTIFIED WITH mysql_native_password BY '强密码';
    ```
-4. **Queue worker 改 code 后不会自动 reload**,要 `nssm restart TradingCRM-Queue`。
+4. **Queue worker 改 code 后不会自动 reload**,要 `nssm restart QuantATM-Queue`。
 5. **Windows Task Scheduler 不会 raise error**,记得跑完看 Laravel log 确认。
 6. **PHP 8.3 + Laragon 自带的可能比较旧**,建议手动下载最新 patch (8.3.x)。
 7. **VPS 跑 5 个 MT5 + Laravel + MySQL + Queue + Nginx** 在 16GB 应付有余,但留意 MT5 占内存,可以关掉它们的 chart 渲染省 RAM。

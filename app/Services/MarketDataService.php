@@ -164,7 +164,7 @@ class MarketDataService
         $response = Http::timeout(20)
             ->withHeaders([
                 // Yahoo will return 401 without a UA
-                'User-Agent' => 'Mozilla/5.0 (TradingCRM/1.0) AppleWebKit/537.36',
+                'User-Agent' => 'Mozilla/5.0 (QuantATM/1.0) AppleWebKit/537.36',
                 'Accept'     => 'application/json',
             ])
             ->get($url, [

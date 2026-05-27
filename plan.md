@@ -1,4 +1,4 @@
-# TradingCRM — 项目规划书
+# QuantATM — 项目规划书
 
 > **Enterprise Portfolio Monitoring + Currency Analysis Dashboard**
 > 用于监控多 broker / 多账户 MT5 交易组合,整合 AI 分析与 ForexFactory 新闻。
@@ -32,7 +32,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 项目名 | TradingCRM |
+| 项目名 | QuantATM |
 | 类型 | Web Dashboard (multi-user, mobile responsive) |
 | 用途 | MT5 多账户监控 + 货币分析 + 新闻日历 + Drawdown 告警 |
 | 模式 | 只读 (read-only),不下单 |

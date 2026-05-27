@@ -40,7 +40,7 @@ class OpenRouterService
             ->withHeaders([
                 'Authorization' => "Bearer {$apiKey}",
                 'HTTP-Referer' => config('app.url', ''),
-                'X-Title' => 'TradingCRM',
+                'X-Title' => 'QuantATM',
             ])
             ->acceptJson()
             ->post(self::ENDPOINT, [

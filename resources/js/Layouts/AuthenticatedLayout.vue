@@ -52,7 +52,7 @@ const roleBadge = computed(() => ({
             <div class="flex items-center gap-3 border-b border-gray-800 px-5 py-4">
                 <Link :href="route('dashboard')" class="flex items-center gap-3">
                     <ApplicationLogo class="h-8 w-auto fill-current text-white" />
-                    <span class="text-lg font-bold tracking-tight text-white">TradingCRM</span>
+                    <span class="text-lg font-bold tracking-tight text-white">QuantATM</span>
                 </Link>
             </div>
 
@@ -122,7 +122,7 @@ const roleBadge = computed(() => ({
                         <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                     </svg>
                 </button>
-                <span class="text-base font-bold text-gray-900">TradingCRM</span>
+                <span class="text-base font-bold text-gray-900">QuantATM</span>
                 <div class="w-9"></div>
             </header>
 
