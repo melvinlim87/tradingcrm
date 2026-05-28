@@ -288,7 +288,10 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                             </p>
                         </div>
                         <div class="bg-white px-4 py-3">
-                            <p class="text-xs font-bold uppercase text-black" title="Max equity drop below initial deposit">Max ABS DD%</p>
+                            <p class="text-xs font-bold uppercase text-black"
+                               :title="`Worst equity drop relative to starting capital (total deposits = ${fmt(overall.capital_base)}). Never decreases.`">
+                                Max ABS DD%
+                            </p>
                             <p class="mt-1 font-mono text-base font-bold"
                                :class="Number(overall.max_abs_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
                                 {{ fmt(overall.max_abs_drawdown_pct, 2) }}%
@@ -493,7 +496,10 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                     </p>
                                 </div>
                                 <div class="bg-white px-4 py-3">
-                                    <p class="text-xs font-bold uppercase text-black" title="Max equity drop below initial deposit">Max ABS DD%</p>
+                                    <p class="text-xs font-bold uppercase text-black"
+                                       :title="`Worst equity drop relative to starting capital (total deposits = ${fmt(acc.capital_base)}${acc.total_deposits != null && Number(acc.total_deposits) > 0 ? ', EA-reported' : ', initial balance fallback'}). Never decreases.`">
+                                        Max ABS DD%
+                                    </p>
                                     <p class="mt-1 font-mono text-base font-bold"
                                        :class="Number(acc.max_abs_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
                                         {{ fmt(acc.max_abs_drawdown_pct, 2) }}%

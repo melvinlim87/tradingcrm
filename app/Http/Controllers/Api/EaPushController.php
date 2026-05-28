@@ -89,9 +89,30 @@ class EaPushController extends Controller
             ? max((float) $account->peak_equity, $equity)
             : max($balance, $equity);
 
-        // Max Absolute Drawdown % — equity vs initial deposit, never decreases
-        $currentAbsDdPct = $initialBalance > 0
-            ? max(0, ($initialBalance - $equity) / $initialBalance * 100)
+        // EA pushes total_deposits / total_withdrawals / net_deposits (v3.73+).
+        // If absent (older EA), persist null/zero — Mt5Account::capital_base
+        // falls back to initial_balance for ROI calc.
+        $totalDeposits    = array_key_exists('total_deposits',    $a) ? (float) $a['total_deposits']    : null;
+        $totalWithdrawals = array_key_exists('total_withdrawals', $a) ? (float) $a['total_withdrawals'] : null;
+        $netDeposits      = array_key_exists('net_deposits',      $a) ? (float) $a['net_deposits']      : null;
+
+        // Capital base = the "starting balance" the user intuitively cares
+        // about. Prefer EA-reported total_deposits (true sum of all deposits
+        // ever made), then the stored value, finally fall back to the first-
+        // seen balance. This mirrors Mt5Account::capitalBase() so Max ABS DD%
+        // shares the same denominator as ROI %.
+        $effectiveCapitalBase = $initialBalance;
+        if ($totalDeposits !== null && $totalDeposits > 0) {
+            $effectiveCapitalBase = $totalDeposits;
+        } elseif ($account->total_deposits !== null && (float) $account->total_deposits > 0) {
+            $effectiveCapitalBase = (float) $account->total_deposits;
+        }
+
+        // Max Absolute Drawdown % — equity vs total deposits ("starting
+        // balance"), never decreases. Answers: "what's the worst % drop my
+        // equity has ever shown relative to the money I put in?"
+        $currentAbsDdPct = $effectiveCapitalBase > 0
+            ? max(0, ($effectiveCapitalBase - $equity) / $effectiveCapitalBase * 100)
             : 0;
         $maxAbsDdPct = max((float) $account->max_abs_drawdown_pct, $currentAbsDdPct);
 
@@ -100,13 +121,6 @@ class EaPushController extends Controller
             ? max(0, ($peakEquity - $equity) / $peakEquity * 100)
             : 0;
         $maxEqDdPct = max((float) $account->max_eq_drawdown_pct, $currentEqDdPct);
-
-        // EA pushes total_deposits / total_withdrawals / net_deposits (v3.73+).
-        // If absent (older EA), persist null/zero — Mt5Account::capital_base
-        // falls back to initial_balance for ROI calc.
-        $totalDeposits    = array_key_exists('total_deposits',    $a) ? (float) $a['total_deposits']    : null;
-        $totalWithdrawals = array_key_exists('total_withdrawals', $a) ? (float) $a['total_withdrawals'] : null;
-        $netDeposits      = array_key_exists('net_deposits',      $a) ? (float) $a['net_deposits']      : null;
 
         $account->update([
             'broker'               => $a['broker'] ?? $account->broker,
