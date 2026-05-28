@@ -289,14 +289,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                     </div>
 
                     <!-- Drawdown + ROI summary row -->
-                    <div class="border-t border-gray-200 grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-4">
-                        <div class="bg-white px-6 py-3">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Current DD%</p>
-                            <p class="mt-1 font-mono text-lg font-bold"
-                               :class="overall.max_drawdown > 0 ? 'text-red-600' : 'text-black'">
-                                {{ fmt(overall.max_drawdown, 2) }}%
-                            </p>
-                        </div>
+                    <div class="border-t border-gray-200 grid grid-cols-1 gap-px bg-gray-200 md:grid-cols-3">
                         <div class="bg-white px-6 py-3">
                             <p class="text-xs font-bold uppercase tracking-wide text-black">Max ABS DD%
                                 <span class="font-normal" title="Equity vs initial deposit, never recovers">ⓘ</span>
@@ -484,8 +477,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 <PortfolioChart :series="acc.profit_series || []" :label="`#${acc.account_number} P&L`" :height="220" />
                             </div>
 
-                            <!-- Metric grid: 8 cards (Balance / Equity / Float% / Float$ / DD% / Max ABS / Max EQ / ROI) -->
-                            <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-8">
+                            <!-- Metric grid: 7 cards (Balance / Equity / Float% / Float$ / Max ABS / Max EQ / ROI) -->
+                            <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-7">
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black">Balance</p>
                                     <p class="mt-1 font-mono text-base font-bold text-black">{{ fmt(acc.balance) }}</p>
@@ -504,13 +497,6 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                     <p class="text-xs font-bold uppercase text-black">Floating $</p>
                                     <p class="mt-1 font-mono text-base font-bold" :class="pctClass(acc.floating_pnl)">
                                         {{ fmt(acc.floating_pnl) }}
-                                    </p>
-                                </div>
-                                <div class="bg-white px-4 py-3">
-                                    <p class="text-xs font-bold uppercase text-black">DD %</p>
-                                    <p class="mt-1 font-mono text-base font-bold"
-                                       :class="Number(acc.drawdown_percent) > Number(acc.drawdown_alert_threshold) ? 'text-red-600' : 'text-black'">
-                                        {{ fmt(acc.drawdown_percent, 2) }}%
                                     </p>
                                 </div>
                                 <div class="bg-white px-4 py-3">

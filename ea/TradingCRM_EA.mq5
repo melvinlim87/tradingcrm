@@ -59,8 +59,17 @@ const int     InpNewsMaxLines      = 9;
 const bool    InpIncludeMt5Calendar = true;
 
 //=== SIGNAL TRADING ===========================================================
-const int     InpMagicNumber  = 112;
-const double  InpLots         = 0.1;
+// InpMagicNumber  : magic stamp used when the EA places orders from /signals.
+// InpMonitorMagic : magic filter for Execution Quality / LP Profiler / Latency
+//                   stats. Set to 0 to monitor ALL trades on the account
+//                   (manual orders, other EAs, etc.) — this is almost always
+//                   what you want for a portfolio-wide quality dashboard.
+//                   Set to a specific magic only if you want to isolate a
+//                   single strategy.
+const int     InpMagicNumber     = 112;
+const long    InpMonitorMagic    = 0;        // 0 = monitor every trade
+const int     InpInitHistoryDays = 30;       // history window seeded at startup
+const double  InpLots            = 0.1;
 
 //=== RISK MONITOR =============================================================
 const int     InpRiskHistoryLimit  = 500;
@@ -179,9 +188,9 @@ int OnInit()
                 false, InpAlertCooldown, 50);
 
    g_slippage.Init(&g_logger, &g_alert, InpSlippageAlertPoints,
-                   InpMagicNumber, 100);
+                   InpMonitorMagic, 100);
 
-   g_latency.Init(&g_alert, InpLatencyAlertMs, InpMagicNumber, 100);
+   g_latency.Init(&g_alert, InpLatencyAlertMs, InpMonitorMagic, 100);
 
    g_spread.Init(&g_logger, &g_alert, InpSpreadMultiplier, InpSpreadSampleSec);
 
@@ -204,7 +213,7 @@ int OnInit()
    }
 
    g_risk.Init(&g_logger, &g_alert, InpMaxMarginUtil, InpMaxDailyDrawdown,
-               InpMaxTotalExposure, InpMaxPositions, InpMagicNumber,
+               InpMaxTotalExposure, InpMaxPositions, InpMonitorMagic,
                InpRiskLogInterval);
 
    g_lp.Init(&g_logger, &g_alert, InpLPReportInterval);
@@ -212,9 +221,11 @@ int OnInit()
    g_dashboard.Init(ChartID(), InpDashboardX, InpDashboardY, InpShowDashboard,
                     &g_slippage, &g_latency, &g_spread, &g_risk, &g_lp, &g_alert);
 
-   datetime today = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
-   g_slippage.ScanHistoryDeals(today, TimeCurrent());
-   g_latency.EstimateFromHistory(today, TimeCurrent());
+   // Seed Slippage, Latency, and LP Profiler from the last N days of history.
+   // Without this, Execution Quality and LP Quality Score panels stay at 0
+   // until the EA observes a live trade — which may never happen on a
+   // monitor-only attachment.
+   SeedFromHistory();
 
    if(InpShowNewsPanel) NewsPanelCreate();
 
@@ -224,6 +235,96 @@ int OnInit()
    g_alert.FireAlert(ALERT_INFO, ALERT_CAT_GENERAL, "", "QuantATM EA started");
 
    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| SeedFromHistory — backfill Execution Quality + LP Profiler from  |
+//| broker trade history at startup. Without this, all three panels   |
+//| (Slippage, Latency, LP) display zeros on a monitor-only EA until  |
+//| a live deal happens to fire OnTradeTransaction.                   |
+//|                                                                    |
+//| Behaviour:                                                         |
+//|  - Window = last InpInitHistoryDays days                          |
+//|  - Magic filter = InpMonitorMagic (0 = include every trade)       |
+//|  - Per-deal: compute slippage (vs ORDER_PRICE_OPEN), latency      |
+//|    (DEAL_TIME - ORDER_TIME_SETUP), spread snapshot — feed into    |
+//|    SlippageTracker / LatencyMonitor / LPProfiler.                 |
+//+------------------------------------------------------------------+
+void SeedFromHistory()
+{
+   datetime from = TimeCurrent() - (datetime)(InpInitHistoryDays * 24 * 3600);
+   datetime to   = TimeCurrent();
+
+   // 1) Slippage + Latency modules have their own scan paths — use them.
+   //    They already honour the magic filter we passed during Init().
+   g_slippage.ScanHistoryDeals(from, to);
+   g_latency.EstimateFromHistory(from, to);
+
+   // 2) LPProfiler has no native history scan — replay the same window
+   //    here and call RecordExecution() per deal so the LP panel fills.
+   if(!HistorySelect(from, to))
+   {
+      Print("[Seed] HistorySelect failed");
+      return;
+   }
+
+   int total = HistoryDealsTotal();
+   int fed   = 0;
+
+   for(int i = 0; i < total; i++)
+   {
+      ulong t = HistoryDealGetTicket(i);
+      if(t == 0) continue;
+
+      ENUM_DEAL_TYPE dt = (ENUM_DEAL_TYPE)HistoryDealGetInteger(t, DEAL_TYPE);
+      if(dt != DEAL_TYPE_BUY && dt != DEAL_TYPE_SELL) continue;
+
+      long m = HistoryDealGetInteger(t, DEAL_MAGIC);
+      if(InpMonitorMagic != 0 && m != InpMonitorMagic) continue;
+
+      string sym       = HistoryDealGetString(t, DEAL_SYMBOL);
+      double execPrice = HistoryDealGetDouble(t, DEAL_PRICE);
+      datetime dealTm  = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
+
+      // Slippage in points (same logic as CSlippageTracker::ScanHistoryDeals)
+      double slipPts = 0;
+      double latMs   = 0;
+      ulong ord = (ulong)HistoryDealGetInteger(t, DEAL_ORDER);
+      if(ord > 0 && HistoryOrderSelect(ord))
+      {
+         ENUM_ORDER_TYPE ot = (ENUM_ORDER_TYPE)HistoryOrderGetInteger(ord, ORDER_TYPE);
+         double op          = HistoryOrderGetDouble(ord, ORDER_PRICE_OPEN);
+         datetime orderTm   = (datetime)HistoryOrderGetInteger(ord, ORDER_TIME_SETUP);
+
+         double reqPrice = execPrice;   // default: assume zero slip
+         if(ot != ORDER_TYPE_BUY && ot != ORDER_TYPE_SELL && op > 0)
+         {
+            reqPrice = op;              // limit/stop — order price is meaningful
+         }
+         else if(op > 0 && execPrice > 0)
+         {
+            double dev = MathAbs(op - execPrice) / execPrice;
+            if(dev < 0.01) reqPrice = op;
+         }
+         double raw      = execPrice - reqPrice;
+         double signed_s = (dt == DEAL_TYPE_SELL) ? -raw : raw;
+         double pt       = SymbolInfoDouble(sym, SYMBOL_POINT);
+         slipPts = (pt > 0) ? signed_s / pt : 0;
+
+         latMs = (double)(dealTm - orderTm) * 1000.0;
+         if(latMs < 0) latMs = 0;
+      }
+
+      double spread = (double)SymbolInfoInteger(sym, SYMBOL_SPREAD);
+
+      // filled = true (all DEAL_TYPE_BUY/SELL deals are fills by definition),
+      // partial = false, requoted = false — history doesn't track these flags.
+      g_lp.RecordExecution(slipPts, spread, latMs, true, false, false);
+      fed++;
+   }
+
+   PrintFormat("[Seed] Backfilled LPProfiler from %d days: %d/%d deals",
+               InpInitHistoryDays, fed, total);
 }
 
 void OnDeinit(const int reason)
@@ -1036,7 +1137,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
          if(dt == DEAL_TYPE_BUY || dt == DEAL_TYPE_SELL)
          {
             long magic = HistoryDealGetInteger(dealTicket, DEAL_MAGIC);
-            if(InpMagicNumber == 0 || magic == InpMagicNumber)
+            if(InpMonitorMagic == 0 || magic == InpMonitorMagic)
             {
                string sym = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
                datetime dealTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);

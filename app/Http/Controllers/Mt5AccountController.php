@@ -3,10 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Mt5Account;
-use App\Models\TelegramTopic;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 
@@ -17,24 +15,14 @@ class Mt5AccountController extends Controller
         $user = $request->user();
 
         $accounts = $user->visibleAccountsQuery()
-            ->with([
-                'telegramTopic:id,mt5_account_id,name,thread_id',
-                'creator:id,name,email,role',
-            ])
+            ->with(['creator:id,name,email,role'])
             ->orderBy('account_number')
             ->get();
 
-        $unboundTopics = TelegramTopic::query()
-            ->whereNull('mt5_account_id')
-            ->where('name', 'like', 'account_%')
-            ->orderBy('name')
-            ->get(['id', 'name', 'thread_id']);
-
         return Inertia::render('Accounts/Index', [
-            'accounts' => $accounts,
-            'unbound_topics' => $unboundTopics,
+            'accounts'    => $accounts,
             'viewer_role' => $user->role,
-            'can_create' => $user->canCreateAccounts(),
+            'can_create'  => $user->canCreateAccounts(),
         ]);
     }
 
@@ -43,16 +31,9 @@ class Mt5AccountController extends Controller
         $this->authorizeCreate($request);
         $data = $this->validatedPayload($request);
 
-        DB::transaction(function () use ($request, $data) {
-            $account = Mt5Account::create($data + [
-                'created_by' => $request->user()->id,
-            ]);
-
-            if (! empty($data['telegram_topic_id'] ?? null)) {
-                TelegramTopic::where('id', $data['telegram_topic_id'])
-                    ->update(['mt5_account_id' => $account->id]);
-            }
-        });
+        Mt5Account::create($data + [
+            'created_by' => $request->user()->id,
+        ]);
 
         return redirect()
             ->route('accounts.index')
@@ -64,19 +45,7 @@ class Mt5AccountController extends Controller
         $this->authorizeModify($request, $account);
         $data = $this->validatedPayload($request, $account->id);
 
-        DB::transaction(function () use ($account, $data) {
-            $account->update($data);
-
-            if (array_key_exists('telegram_topic_id', $data)) {
-                TelegramTopic::where('mt5_account_id', $account->id)
-                    ->update(['mt5_account_id' => null]);
-
-                if ($data['telegram_topic_id']) {
-                    TelegramTopic::where('id', $data['telegram_topic_id'])
-                        ->update(['mt5_account_id' => $account->id]);
-                }
-            }
-        });
+        $account->update($data);
 
         return redirect()
             ->route('accounts.index')
@@ -86,9 +55,6 @@ class Mt5AccountController extends Controller
     public function destroy(Request $request, Mt5Account $account): RedirectResponse
     {
         $this->authorizeModify($request, $account);
-
-        TelegramTopic::where('mt5_account_id', $account->id)
-            ->update(['mt5_account_id' => null]);
 
         $accountNumber = $account->account_number;
         $account->delete();
@@ -126,9 +92,10 @@ class Mt5AccountController extends Controller
             'account_number' => $accountNumberRule,
             'broker' => 'required|string|max:100',
             'drawdown_alert_threshold' => 'required|numeric|min:0.1|max:50',
-            'telegram_topic_id' => 'nullable|exists:telegram_topics,id',
         ]);
         // Note: account_name is no longer a user input — the EA push will fill it
         // from MT5's ACCOUNT_NAME (broker-side account holder name).
+        // Note: telegram_topic_id removed — Telegram alerts to be replaced by
+        // WhatsApp notifications (planned, not yet implemented).
     }
 }

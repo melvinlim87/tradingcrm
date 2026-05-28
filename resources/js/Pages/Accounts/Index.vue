@@ -6,7 +6,6 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
 const props = defineProps({
     accounts: { type: Array, default: () => [] },
-    unbound_topics: { type: Array, default: () => [] },
     viewer_role: { type: String, default: 'user' },
     can_create: { type: Boolean, default: false },
 });
@@ -22,7 +21,6 @@ const form = useForm({
     account_number: '',
     broker: 'RS Finance',
     drawdown_alert_threshold: 2.0,
-    telegram_topic_id: null,
 });
 
 const openCreate = () => {
@@ -38,7 +36,6 @@ const openEdit = (account) => {
     form.account_number = account.account_number;
     form.broker = account.broker;
     form.drawdown_alert_threshold = account.drawdown_alert_threshold;
-    form.telegram_topic_id = account.telegram_topic?.id ?? null;
     showForm.value = true;
 };
 
@@ -64,17 +61,6 @@ const destroy = (account) => {
     if (!confirm(`Delete account #${account.account_number}? This cannot be undone.`)) return;
     router.delete(route('accounts.destroy', account.id));
 };
-
-const topicOptions = computed(() => {
-    const base = [...props.unbound_topics];
-    if (editingId.value) {
-        const current = props.accounts.find(a => a.id === editingId.value);
-        if (current?.telegram_topic) {
-            base.unshift(current.telegram_topic);
-        }
-    }
-    return base;
-});
 
 const statusClass = (status) => ({
     online: 'bg-green-100 text-green-700',
@@ -167,28 +153,6 @@ const statusClass = (status) => ({
                                 </p>
                             </div>
 
-                            <div class="md:col-span-2">
-                                <label class="block text-sm font-medium text-gray-700">
-                                    Bind Telegram Topic
-                                </label>
-                                <select
-                                    v-model="form.telegram_topic_id"
-                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                >
-                                    <option :value="null">— Unbound —</option>
-                                    <option
-                                        v-for="t in topicOptions"
-                                        :key="t.id"
-                                        :value="t.id"
-                                    >
-                                        {{ t.name }} (thread #{{ t.thread_id }})
-                                    </option>
-                                </select>
-                                <p class="mt-1 text-xs text-gray-500">
-                                    Per-account drawdown alerts will be sent to this Telegram topic.
-                                </p>
-                            </div>
-
                             <div class="md:col-span-2 flex justify-end space-x-3">
                                 <button
                                     type="button"
@@ -220,7 +184,6 @@ const statusClass = (status) => ({
                                     <th class="px-6 py-3 text-right">Equity</th>
                                     <th class="px-6 py-3 text-right">DD %</th>
                                     <th class="px-6 py-3 text-right">Alert ≥</th>
-                                    <th class="px-6 py-3">Telegram</th>
                                     <th class="px-6 py-3">Status</th>
                                     <th v-if="isAdministrator" class="px-6 py-3">Added By</th>
                                     <th class="px-6 py-3 text-right">Actions</th>
@@ -228,7 +191,7 @@ const statusClass = (status) => ({
                             </thead>
                             <tbody class="divide-y divide-gray-200 bg-white">
                                 <tr v-if="accounts.length === 0">
-                                    <td colspan="10" class="px-6 py-10 text-center text-sm text-gray-500">
+                                    <td colspan="9" class="px-6 py-10 text-center text-sm text-gray-500">
                                         No accounts yet. Click <strong>Add Account</strong> above to register the first MT5 account.
                                     </td>
                                 </tr>
@@ -254,9 +217,6 @@ const statusClass = (status) => ({
                                     </td>
                                     <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-mono text-gray-700">
                                         {{ Number(acc.drawdown_alert_threshold).toFixed(2) }}%
-                                    </td>
-                                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
-                                        {{ acc.telegram_topic?.name || '—' }}
                                     </td>
                                     <td class="whitespace-nowrap px-6 py-4 text-sm">
                                         <span :class="['rounded-full px-2 py-0.5 text-xs font-medium', statusClass(acc.status)]">
