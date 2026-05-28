@@ -12,7 +12,7 @@ const props = defineProps({
             account_count: 0,
             balance: 0, equity: 0, margin: 0, free_margin: 0,
             floating_pnl: 0, floating_pct: 0, closed_profit: 0,
-            max_drawdown: 0, max_abs_drawdown_pct: 0, max_eq_drawdown_pct: 0,
+            max_drawdown: 0, max_abs_drawdown_pct: 0,
             profit_series: [],
         }),
     },
@@ -259,60 +259,47 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         <PortfolioChart :series="overall.profit_series || []" label="Portfolio P&L" :height="280" />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-5">
-                        <div class="bg-white px-6 py-5">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Profit (Closed)</p>
-                            <p class="mt-1 font-mono text-2xl font-bold" :class="pctClass(overall.closed_profit)">
+                    <!-- Unified metric grid (matches Individual layout): 7 cards in one row -->
+                    <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-7">
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black">Profit (Closed)</p>
+                            <p class="mt-1 font-mono text-base font-bold" :class="pctClass(overall.closed_profit)">
                                 {{ fmt(overall.closed_profit) }}
                             </p>
                         </div>
-                        <div class="bg-white px-6 py-5">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Balance</p>
-                            <p class="mt-1 font-mono text-2xl font-bold text-black">{{ fmt(overall.balance) }}</p>
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black">Balance</p>
+                            <p class="mt-1 font-mono text-base font-bold text-black">{{ fmt(overall.balance) }}</p>
                         </div>
-                        <div class="bg-white px-6 py-5">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Equity</p>
-                            <p class="mt-1 font-mono text-2xl font-bold text-black">{{ fmt(overall.equity) }}</p>
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black">Equity</p>
+                            <p class="mt-1 font-mono text-base font-bold text-black">{{ fmt(overall.equity) }}</p>
                         </div>
-                        <div class="bg-white px-6 py-5">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Floating $</p>
-                            <p class="mt-1 font-mono text-2xl font-bold" :class="pctClass(overall.floating_pnl)">
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black">Floating $</p>
+                            <p class="mt-1 font-mono text-base font-bold" :class="pctClass(overall.floating_pnl)">
                                 {{ fmt(overall.floating_pnl) }}
                             </p>
                         </div>
-                        <div class="bg-white px-6 py-5">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Floating %</p>
-                            <p class="mt-1 font-mono text-2xl font-bold" :class="pctClass(overall.floating_pct)">
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black">Floating %</p>
+                            <p class="mt-1 font-mono text-base font-bold" :class="pctClass(overall.floating_pct)">
                                 {{ fmt(overall.floating_pct, 2) }}%
                             </p>
                         </div>
-                    </div>
-
-                    <!-- Drawdown + ROI summary row -->
-                    <div class="border-t border-gray-200 grid grid-cols-1 gap-px bg-gray-200 md:grid-cols-3">
-                        <div class="bg-white px-6 py-3">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Max ABS DD%
-                                <span class="font-normal" title="Equity vs initial deposit, never recovers">ⓘ</span>
-                            </p>
-                            <p class="mt-1 font-mono text-lg font-bold"
-                               :class="overall.max_abs_drawdown_pct > 0 ? 'text-red-600' : 'text-black'">
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black" title="Max equity drop below initial deposit">Max ABS DD%</p>
+                            <p class="mt-1 font-mono text-base font-bold"
+                               :class="Number(overall.max_abs_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
                                 {{ fmt(overall.max_abs_drawdown_pct, 2) }}%
                             </p>
                         </div>
-                        <div class="bg-white px-6 py-3">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">Max EQ DD%
-                                <span class="font-normal" title="Peak-to-valley equity drop">ⓘ</span>
+                        <div class="bg-white px-4 py-3">
+                            <p class="text-xs font-bold uppercase text-black"
+                               :title="`Closed Profit / Total Deposits · deposits = ${fmt(overall.capital_base)} · realised return, ignores floating PnL`">
+                                ROI %
                             </p>
-                            <p class="mt-1 font-mono text-lg font-bold"
-                               :class="overall.max_eq_drawdown_pct > 0 ? 'text-red-600' : 'text-black'">
-                                {{ fmt(overall.max_eq_drawdown_pct, 2) }}%
-                            </p>
-                        </div>
-                        <div class="bg-white px-6 py-3">
-                            <p class="text-xs font-bold uppercase tracking-wide text-black">ROI %
-                                <span class="font-normal" :title="`Closed Profit / Total Deposits · deposits = ${fmt(overall.capital_base)} · realised return, ignores floating PnL`">ⓘ</span>
-                            </p>
-                            <p class="mt-1 font-mono text-lg font-bold"
+                            <p class="mt-1 font-mono text-base font-bold"
                                :class="overall.roi_pct == null ? 'text-gray-400' : pctClass(overall.roi_pct)">
                                 <template v-if="overall.roi_pct == null">—</template>
                                 <template v-else>{{ overall.roi_pct >= 0 ? '+' : '' }}{{ fmt(overall.roi_pct, 2) }}%</template>
@@ -477,8 +464,14 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 <PortfolioChart :series="acc.profit_series || []" :label="`#${acc.account_number} P&L`" :height="220" />
                             </div>
 
-                            <!-- Metric grid: 7 cards (Balance / Equity / Float% / Float$ / Max ABS / Max EQ / ROI) -->
+                            <!-- Unified metric grid (mirrors Overall layout): 7 cards in one row -->
                             <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-7">
+                                <div class="bg-white px-4 py-3">
+                                    <p class="text-xs font-bold uppercase text-black">Profit (Closed)</p>
+                                    <p class="mt-1 font-mono text-base font-bold" :class="pctClass(Number(acc.closed_profit_total || 0))">
+                                        {{ fmt(acc.closed_profit_total) }}
+                                    </p>
+                                </div>
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black">Balance</p>
                                     <p class="mt-1 font-mono text-base font-bold text-black">{{ fmt(acc.balance) }}</p>
@@ -488,15 +481,15 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                     <p class="mt-1 font-mono text-base font-bold text-black">{{ fmt(acc.equity) }}</p>
                                 </div>
                                 <div class="bg-white px-4 py-3">
-                                    <p class="text-xs font-bold uppercase text-black">Floating %</p>
-                                    <p class="mt-1 font-mono text-base font-bold" :class="pctClass(accountFloatingPct(acc))">
-                                        {{ fmt(accountFloatingPct(acc), 2) }}%
-                                    </p>
-                                </div>
-                                <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black">Floating $</p>
                                     <p class="mt-1 font-mono text-base font-bold" :class="pctClass(acc.floating_pnl)">
                                         {{ fmt(acc.floating_pnl) }}
+                                    </p>
+                                </div>
+                                <div class="bg-white px-4 py-3">
+                                    <p class="text-xs font-bold uppercase text-black">Floating %</p>
+                                    <p class="mt-1 font-mono text-base font-bold" :class="pctClass(accountFloatingPct(acc))">
+                                        {{ fmt(accountFloatingPct(acc), 2) }}%
                                     </p>
                                 </div>
                                 <div class="bg-white px-4 py-3">
@@ -504,13 +497,6 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                     <p class="mt-1 font-mono text-base font-bold"
                                        :class="Number(acc.max_abs_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
                                         {{ fmt(acc.max_abs_drawdown_pct, 2) }}%
-                                    </p>
-                                </div>
-                                <div class="bg-white px-4 py-3">
-                                    <p class="text-xs font-bold uppercase text-black" title="Worst peak-to-valley equity drop">Max EQ DD%</p>
-                                    <p class="mt-1 font-mono text-base font-bold"
-                                       :class="Number(acc.max_eq_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
-                                        {{ fmt(acc.max_eq_drawdown_pct, 2) }}%
                                     </p>
                                 </div>
                                 <div class="bg-white px-4 py-3">
