@@ -1,0 +1,2 @@
+- [TradingCRM project context](project_tradingcrm.md) — Laravel + MySQL + Inertia/Vue MT5 monitoring dashboard,EA HTTP push,Telegram alerts,Windows Server VPS
+- [User tech stack preferences](user_tech_preferences.md) — Laravel/MySQL on Windows VPS,Linux supervisor 经验,外汇交易领域,Telegram 通知偏好
