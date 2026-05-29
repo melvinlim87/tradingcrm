@@ -180,6 +180,10 @@ class EaPushController extends Controller
                 'volume'         => (float) ($p['volume'] ?? 0),
                 'open_price'     => (float) ($p['open_price'] ?? 0),
                 'current_price'  => (float) ($p['current_price'] ?? 0),
+                // tick_time tells the dashboard how fresh current_price is.
+                // EA v3.75+ pushes the broker-side SymbolInfoTick timestamp;
+                // older EAs send nothing → falls back to now().
+                'tick_time'      => $this->parseDate($p['tick_time'] ?? null) ?? now(),
                 'sl'             => (float) ($p['sl'] ?? 0),
                 'tp'             => (float) ($p['tp'] ?? 0),
                 'profit'         => (float) ($p['profit'] ?? 0),

@@ -188,6 +188,39 @@ const accountSymbols = (acc) => {
     return Array.from(set).sort();
 };
 
+// ───────────────── tick freshness for open-position current_price ─────────────────
+// Forces the table to re-evaluate freshness every second so the colour
+// transitions from green → amber → red as the snapshot ages.
+const nowMs = ref(Date.now());
+let tickFreshnessTimer;
+onMounted(() => { tickFreshnessTimer = setInterval(() => { nowMs.value = Date.now(); }, 1000); });
+onBeforeUnmount(() => { if (tickFreshnessTimer) clearInterval(tickFreshnessTimer); });
+
+// "Seconds since tick" — null if EA never reported tick_time.
+const tickAgeSec = (iso) => {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    if (isNaN(t)) return null;
+    return Math.max(0, Math.round((nowMs.value - t) / 1000));
+};
+
+// Tooltip text for current_price cell — e.g. "Tick at 16:42:08 · 4s ago"
+const tickTooltip = (iso) => {
+    const age = tickAgeSec(iso);
+    if (age == null) return 'Tick time unreported by EA (update to v3.75+)';
+    const local = new Date(iso).toLocaleTimeString();
+    return `Tick at ${local} · ${age}s ago`;
+};
+
+// Cell colour: fresh < 30s = default, 30-60s amber, >60s red.
+const tickFreshClass = (iso) => {
+    const age = tickAgeSec(iso);
+    if (age == null) return 'text-gray-400';     // unknown freshness
+    if (age > 60)   return 'text-red-600';
+    if (age > 30)   return 'text-amber-600';
+    return 'text-black';
+};
+
 // ───────────────── refresh ─────────────────
 const refresh = () => {
     router.reload({ only: ['accounts', 'overall'], preserveScroll: true });
@@ -586,7 +619,15 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                                 </td>
                                                 <td class="px-4 py-2 text-right font-mono text-black">{{ fmt(o.volume, 2) }}</td>
                                                 <td class="px-4 py-2 text-right font-mono text-black">{{ Number(o.open_price).toFixed(5) }}</td>
-                                                <td class="px-4 py-2 text-right font-mono text-black">{{ Number(o.current_price).toFixed(5) }}</td>
+                                                <td class="px-4 py-2 text-right font-mono"
+                                                    :class="tickFreshClass(o.tick_time)"
+                                                    :title="tickTooltip(o.tick_time)">
+                                                    {{ Number(o.current_price).toFixed(5) }}
+                                                    <span v-if="tickAgeSec(o.tick_time) != null && tickAgeSec(o.tick_time) > 30"
+                                                          class="ml-1 text-[10px] font-normal">
+                                                        ({{ tickAgeSec(o.tick_time) }}s)
+                                                    </span>
+                                                </td>
                                                 <td class="px-4 py-2 text-right font-mono text-black">{{ Number(o.sl).toFixed(5) }}</td>
                                                 <td class="px-4 py-2 text-right font-mono text-black">{{ Number(o.tp).toFixed(5) }}</td>
                                                 <td class="px-4 py-2 text-right font-mono font-bold" :class="pctClass(o.pnl)">{{ fmt(o.pnl) }}</td>

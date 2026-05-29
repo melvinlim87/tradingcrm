@@ -14,12 +14,13 @@ class OrderOpen extends Model
 
     protected $fillable = [
         'mt5_account_id', 'ticket', 'symbol', 'type', 'volume',
-        'open_price', 'current_price', 'sl', 'tp',
+        'open_price', 'current_price', 'tick_time', 'sl', 'tp',
         'profit', 'swap', 'pnl', 'magic', 'opened_at',
     ];
 
     protected $casts = [
         'opened_at' => 'datetime',
+        'tick_time' => 'datetime',
         'ticket' => 'integer',
         'magic' => 'integer',
         'volume' => 'decimal:2',

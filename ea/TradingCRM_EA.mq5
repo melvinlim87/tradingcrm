@@ -16,10 +16,10 @@
 //|         add: https://quant.lazetrader.com                         |
 //+------------------------------------------------------------------+
 #property copyright "QuantATM"
-#property version   "3.74"
+#property version   "3.75"
 #property strict
 
-#define EA_VERSION "3.74"
+#define EA_VERSION "3.75"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -540,19 +540,33 @@ void ExportRiskData()
       // === Fresh tick fetch (replaces stale POSITION_PRICE_CURRENT) =========
       // POSITION_PRICE_CURRENT is only refreshed on PnL recompute events,
       // which can leave the value seconds behind the actual market when
-      // the EA runs on a 10s timer. Pull the latest tick now so the
-      // dashboard never shows a price the broker terminal has already moved
-      // past. Close-side rule: BUY closes at BID, SELL closes at ASK.
+      // the EA runs on a 10s timer.
+      //
+      // Some brokers stop streaming ticks for a symbol that isn't in
+      // Market Watch — even though we have an open position on it.
+      // SymbolSelect(sym, true) ensures the broker keeps pushing ticks
+      // for the symbol, so SymbolInfoTick returns a current value.
+      //
+      // Close-side rule: BUY closes at BID, SELL closes at ASK.
+      //
+      // tick.time is forwarded to the backend so the dashboard can flag
+      // any price snapshot that's more than ~30s old.
+      SymbolSelect(sym, true);
+
       MqlTick tick;
       double currentPrice = 0.0;
+      datetime tickTime   = 0;
       if(SymbolInfoTick(sym, tick))
       {
          currentPrice = (ptype == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
+         tickTime     = tick.time;   // server-side tick timestamp (UTC)
       }
       else
       {
          // Fallback if the tick fetch fails (offline / no quotes yet)
          currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+         tickTime     = TimeCurrent();
+         PrintFormat("[QuantATM] SymbolInfoTick FAILED for %s — using POSITION_PRICE_CURRENT fallback", sym);
       }
       // =====================================================================
 
@@ -569,6 +583,7 @@ void ExportRiskData()
       posJson += "\"volume\":" + DoubleToString(volume, 2) + ",";
       posJson += "\"open_price\":" + DoubleToString(openPrice, digits) + ",";
       posJson += "\"current_price\":" + DoubleToString(currentPrice, digits) + ",";
+      posJson += "\"tick_time\":" + (tickTime > 0 ? "\"" + FormatIso8601(tickTime) + "\"" : "null") + ",";
       posJson += "\"sl\":" + DoubleToString(sl, digits) + ",";
       posJson += "\"tp\":" + DoubleToString(tp, digits) + ",";
       posJson += "\"profit\":" + DoubleToString(profit, 2) + ",";
