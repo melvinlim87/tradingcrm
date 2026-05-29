@@ -21,6 +21,7 @@ const form = useForm({
     account_number: '',
     broker: 'RS Finance',
     drawdown_alert_threshold: 2.0,
+    notes: '',
 });
 
 const openCreate = () => {
@@ -36,6 +37,7 @@ const openEdit = (account) => {
     form.account_number = account.account_number;
     form.broker = account.broker;
     form.drawdown_alert_threshold = account.drawdown_alert_threshold;
+    form.notes = account.notes || '';
     showForm.value = true;
 };
 
@@ -150,6 +152,22 @@ const statusClass = (status) => ({
                                 />
                                 <p v-if="form.errors.drawdown_alert_threshold" class="mt-1 text-xs text-red-600">
                                     {{ form.errors.drawdown_alert_threshold }}
+                                </p>
+                            </div>
+
+                            <div class="md:col-span-2">
+                                <label class="block text-sm font-medium text-gray-700">
+                                    Notes <span class="text-xs font-normal text-gray-500">(optional · max 1000 chars · visible on dashboard)</span>
+                                </label>
+                                <textarea
+                                    v-model="form.notes"
+                                    rows="3"
+                                    maxlength="1000"
+                                    placeholder="e.g. Swing strategy, no Sunday gaps · Client funded 2026-05-01 · Hands-off"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                ></textarea>
+                                <p v-if="form.errors.notes" class="mt-1 text-xs text-red-600">
+                                    {{ form.errors.notes }}
                                 </p>
                             </div>
 

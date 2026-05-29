@@ -92,6 +92,7 @@ class Mt5AccountController extends Controller
             'account_number' => $accountNumberRule,
             'broker' => 'required|string|max:100',
             'drawdown_alert_threshold' => 'required|numeric|min:0.1|max:50',
+            'notes' => 'nullable|string|max:1000',
         ]);
         // Note: account_name is no longer a user input — the EA push will fill it
         // from MT5's ACCOUNT_NAME (broker-side account holder name).

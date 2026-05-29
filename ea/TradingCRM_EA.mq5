@@ -16,10 +16,10 @@
 //|         add: https://quant.lazetrader.com                         |
 //+------------------------------------------------------------------+
 #property copyright "QuantATM"
-#property version   "3.73"
+#property version   "3.74"
 #property strict
 
-#define EA_VERSION "3.73"
+#define EA_VERSION "3.74"
 
 #include <Trade\Trade.mqh>
 #include <ExecutionMonitor\Dashboard.mqh>
@@ -536,7 +536,26 @@ void ExportRiskData()
       double profit       = PositionGetDouble(POSITION_PROFIT);
       double swap         = PositionGetDouble(POSITION_SWAP);
       double openPrice    = PositionGetDouble(POSITION_PRICE_OPEN);
-      double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+
+      // === Fresh tick fetch (replaces stale POSITION_PRICE_CURRENT) =========
+      // POSITION_PRICE_CURRENT is only refreshed on PnL recompute events,
+      // which can leave the value seconds behind the actual market when
+      // the EA runs on a 10s timer. Pull the latest tick now so the
+      // dashboard never shows a price the broker terminal has already moved
+      // past. Close-side rule: BUY closes at BID, SELL closes at ASK.
+      MqlTick tick;
+      double currentPrice = 0.0;
+      if(SymbolInfoTick(sym, tick))
+      {
+         currentPrice = (ptype == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
+      }
+      else
+      {
+         // Fallback if the tick fetch fails (offline / no quotes yet)
+         currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+      }
+      // =====================================================================
+
       double sl           = PositionGetDouble(POSITION_SL);
       double tp           = PositionGetDouble(POSITION_TP);
       datetime openedAt   = (datetime)PositionGetInteger(POSITION_TIME);

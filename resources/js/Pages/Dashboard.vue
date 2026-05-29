@@ -259,9 +259,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                         <PortfolioChart :series="overall.profit_series || []" label="Portfolio P&L" :height="280" />
                     </div>
 
-                    <!-- Unified metric grid (matches Individual layout): 6 cards in one row
-                         (Max ABS DD% hidden — see comment block below) -->
-                    <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-6">
+                    <!-- Unified metric grid (matches Individual layout): 7 cards in one row -->
+                    <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-7">
                         <div class="bg-white px-4 py-3">
                             <p class="text-xs font-bold uppercase text-black">Profit (Closed)</p>
                             <p class="mt-1 font-mono text-base font-bold" :class="pctClass(overall.closed_profit)">
@@ -288,20 +287,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 {{ fmt(overall.floating_pct, 2) }}%
                             </p>
                         </div>
-                        <!-- Max ABS DD% hidden — denominator logic needs revisit. Restore when fixed. -->
-                        <!--
                         <div class="bg-white px-4 py-3">
                             <p class="text-xs font-bold uppercase text-black"
-                               :title="`Worst equity drop relative to starting capital (total deposits = ${fmt(overall.capital_base)}). Never decreases.`">
+                               :title="`Worst equity drop below starting capital. Ranges 0% (never below) → negative (drawdown). Capital base = ${fmt(overall.capital_base)}. Never improves.`">
                                 Max ABS DD%
                             </p>
                             <p class="mt-1 font-mono text-base font-bold"
                                :class="Number(overall.max_abs_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
-                                {{ fmt(overall.max_abs_drawdown_pct, 2) }}%
+                                {{ Number(overall.max_abs_drawdown_pct) > 0 ? '-' : '' }}{{ fmt(overall.max_abs_drawdown_pct, 2) }}%
                             </p>
                         </div>
-                        -->
-
                         <div class="bg-white px-4 py-3">
                             <p class="text-xs font-bold uppercase text-black"
                                :title="`Closed Profit / Total Deposits · deposits = ${fmt(overall.capital_base)} · realised return, ignores floating PnL`">
@@ -431,6 +426,14 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 </div>
                             </div>
 
+                            <!-- Notes (admin-set free-text, optional) -->
+                            <div v-if="acc.notes" class="border-b border-gray-200 bg-amber-50 px-6 py-2">
+                                <p class="flex items-start gap-2 text-xs text-amber-900">
+                                    <span class="font-bold uppercase tracking-wide text-amber-700">Note</span>
+                                    <span class="whitespace-pre-wrap">{{ acc.notes }}</span>
+                                </p>
+                            </div>
+
                             <!-- Profit chart per account -->
                             <div v-if="acc.profit_series?.length > 1" class="relative border-b border-gray-200 bg-white px-6 py-3">
                                 <div class="mb-2 flex flex-wrap items-center justify-between gap-3">
@@ -472,9 +475,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                 <PortfolioChart :series="acc.profit_series || []" :label="`#${acc.account_number} P&L`" :height="220" />
                             </div>
 
-                            <!-- Unified metric grid (mirrors Overall layout): 6 cards in one row
-                                 (Max ABS DD% hidden — see comment block below) -->
-                            <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-6">
+                            <!-- Unified metric grid (mirrors Overall layout): 7 cards in one row -->
+                            <div class="grid grid-cols-2 gap-px bg-gray-200 md:grid-cols-7">
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black">Profit (Closed)</p>
                                     <p class="mt-1 font-mono text-base font-bold" :class="pctClass(Number(acc.closed_profit_total || 0))">
@@ -501,20 +503,16 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
                                         {{ fmt(accountFloatingPct(acc), 2) }}%
                                     </p>
                                 </div>
-                                <!-- Max ABS DD% hidden — denominator logic needs revisit. Restore when fixed. -->
-                                <!--
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black"
-                                       :title="`Worst equity drop relative to starting capital (total deposits = ${fmt(acc.capital_base)}${acc.total_deposits != null && Number(acc.total_deposits) > 0 ? ', EA-reported' : ', initial balance fallback'}). Never decreases.`">
+                                       :title="`Worst equity drop below starting capital. Ranges 0% (never below) → negative (drawdown). Capital base = ${fmt(acc.capital_base)}${acc.total_deposits != null && Number(acc.total_deposits) > 0 ? ' (EA-reported deposits)' : ' (initial balance fallback)'}. Never improves.`">
                                         Max ABS DD%
                                     </p>
                                     <p class="mt-1 font-mono text-base font-bold"
                                        :class="Number(acc.max_abs_drawdown_pct) > 0 ? 'text-red-600' : 'text-black'">
-                                        {{ fmt(acc.max_abs_drawdown_pct, 2) }}%
+                                        {{ Number(acc.max_abs_drawdown_pct) > 0 ? '-' : '' }}{{ fmt(acc.max_abs_drawdown_pct, 2) }}%
                                     </p>
                                 </div>
-                                -->
-
                                 <div class="bg-white px-4 py-3">
                                     <p class="text-xs font-bold uppercase text-black"
                                        :title="`Closed Profit / Total Deposits · profit=${fmt(acc.closed_profit_total)} · deposits=${fmt(acc.capital_base)} (${acc.total_deposits != null && Number(acc.total_deposits) > 0 ? 'EA-reported' : 'initial balance fallback'}) · realised, ignores floating PnL`">

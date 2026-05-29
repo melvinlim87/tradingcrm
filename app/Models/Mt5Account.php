@@ -38,6 +38,7 @@ class Mt5Account extends Model
         'max_abs_drawdown_pct',
         'max_eq_drawdown_pct',
         'drawdown_alert_threshold',
+        'notes',
         'status',
         'last_ping_at',
         'created_by',
